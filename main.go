@@ -69,6 +69,9 @@ func pick(client string) error {
 	if err != nil {
 		return fmt.Errorf("this plugin needs fzf. Install it, for example with: brew install fzf")
 	}
+	if err := checkServer(os.Getenv("REX_SESSION")); err != nil {
+		return err
+	}
 	self, err := os.Executable()
 	if err != nil {
 		return err

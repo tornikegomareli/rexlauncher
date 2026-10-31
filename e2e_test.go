@@ -241,3 +241,21 @@ func TestGoToFocusesThePane(t *testing.T) {
 		t.Errorf("focused = %s, want %s", got, target.Block)
 	}
 }
+
+func TestRefusesAServerThatDoesNotHoldItsOwnSession(t *testing.T) {
+	server(t)
+	newSession(t, "only")
+	if err := checkServer("session:not-on-this-server"); err == nil {
+		t.Fatal("no error for a session the server does not have")
+	}
+	panes, err := listPanes("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkServer(panes[0].Session); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkServer(""); err == nil {
+		t.Fatal("no error outside of Rex")
+	}
+}

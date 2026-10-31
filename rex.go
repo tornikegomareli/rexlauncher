@@ -75,6 +75,26 @@ func forEach(n int, work func(i int)) {
 	wg.Wait()
 }
 
+// checkServer makes sure rex reaches the server this pane is on. A terminal on a
+// server started with its own --listen has no REX_SERVER, so rex would call the
+// default server, and the picker would go to panes that belong to another.
+func checkServer(session string) error {
+	var list struct {
+		Sessions []struct {
+			ID string `json:"session_id"`
+		} `json:"sessions"`
+	}
+	if err := callRex("session.list", struct{}{}, &list); err != nil {
+		return err
+	}
+	for _, s := range list.Sessions {
+		if s.ID == session {
+			return nil
+		}
+	}
+	return fmt.Errorf("rex reached a server that does not hold this pane's session (%q). Set REX_SERVER", session)
+}
+
 // listPanes returns every terminal on the server except self, in Rex's order.
 func listPanes(self string) ([]pane, error) {
 	var list struct {
