@@ -184,7 +184,7 @@ func TestFindsAPaneByNameByWhatWasSaidAndByItsScreen(t *testing.T) {
 	if got, want := blocks("fix the login"), "pane:"+agent.Block; got != want {
 		t.Errorf("by conversation name: %s, want %s", got, want)
 	}
-	if got, want := blocks("zebrafish"), "said:"+agent.Block+" said:"+agent.Block; got != want {
+	if got, want := blocks("zebrafish"), "said:"+agent.Block; got != want {
 		t.Errorf("by what was said: %s, want %s", got, want)
 	}
 	if got, want := blocks("mongoose-42"), "screen:"+shell.Block; got != want {

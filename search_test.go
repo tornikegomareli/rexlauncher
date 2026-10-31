@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,10 +49,98 @@ func TestPanesComeBeforeWordsAndWordsBeforeScreens(t *testing.T) {
 	}
 }
 
+func TestAPaneHasOneRowHoweverManyMessagesMatch(t *testing.T) {
+	var lines []string
+	for i := range 40 {
+		lines = append(lines, said("user", fmt.Sprintf("word %d", i)))
+	}
+	results := search([]pane{{Block: "a", Name: "x", Index: writeLines(t, lines...)}}, "word")
+	if len(results) != 1 || results[0].Matches != 40 {
+		t.Fatalf("got %+v", results)
+	}
+	if !strings.Contains(results[0].Display, "40 matches") {
+		t.Errorf("no count in %q", results[0].Display)
+	}
+}
+
+func TestARowNamesThePaneBeforeTheMatch(t *testing.T) {
+	p := pane{SessionLabel: "work", WindowLabel: "main", Name: "Fix the login", Index: writeLines(t, said("user", "a word"))}
+	first, second, ok := strings.Cut(search([]pane{p}, "word")[0].Display, "\n")
+	if !ok || !strings.Contains(first, "Fix the login") || !strings.Contains(first, "work") {
+		t.Fatalf("first line: %q", first)
+	}
+	if !strings.Contains(second, hit+"word"+reset) || !strings.Contains(second, "you: ") {
+		t.Fatalf("second line: %q", second)
+	}
+}
+
+func TestARowOfAClaudeMessageHasNoLabel(t *testing.T) {
+	p := pane{Name: "x", Index: writeLines(t, said("assistant", "a word"))}
+	if display := search([]pane{p}, "word")[0].Display; strings.Contains(display, "claude") {
+		t.Fatalf("got %q", display)
+	}
+}
+
+func TestARowWithoutAMatchInTextShowsTheFolder(t *testing.T) {
+	p := pane{Name: "work", Cwd: "/somewhere/code"}
+	for _, query := range []string{"", "work"} {
+		if display := search([]pane{p}, query)[0].Display; !strings.Contains(display, "\n"+dim+"/somewhere/code") {
+			t.Errorf("%q: got %q", query, display)
+		}
+	}
+}
+
+func TestARowDoesNotRepeatASessionNamedLikeItsPane(t *testing.T) {
+	display := search([]pane{{SessionLabel: "Panes", WindowLabel: "Panes", Name: "panes"}}, "")[0].Display
+	first, _, _ := strings.Cut(display, "\n")
+	if strings.Count(strings.ToLower(first), "panes") != 1 {
+		t.Fatalf("got %q", first)
+	}
+}
+
+func TestAPaneWithoutANameUsesItsWindow(t *testing.T) {
+	display := search([]pane{{SessionLabel: "s", WindowLabel: "main"}}, "")[0].Display
+	if first, _, _ := strings.Cut(display, "\n"); !strings.Contains(first, "main") {
+		t.Fatalf("got %q", first)
+	}
+}
+
+func TestAMatchAtTheStartOfAWordBeatsAMatchInsideOne(t *testing.T) {
+	panes := []pane{
+		{Block: "inside", Name: "x", Index: writeLines(t, said("user", "I read Japanese"))},
+		{Block: "start", Name: "y", Screen: writeLines(t, "split panes here")},
+	}
+	if got := strings.Join(kinds(search(panes, "panes")), " "); got != "screen:start said:inside" {
+		t.Fatalf("got %v", got)
+	}
+	// The word a person is still typing counts too.
+	if got := strings.Join(kinds(search(panes, "pane")), " "); !strings.HasPrefix(got, "screen:start") {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestARowShowsTheBestMatchOfItsPane(t *testing.T) {
+	p := pane{Name: "x", Index: writeLines(t, said("user", "older panes"), said("user", "newer panes"), said("user", "newest Japanese"))}
+	if display := search([]pane{p}, "panes")[0].Display; !strings.Contains(display, "newer") {
+		t.Fatalf("got %q", display)
+	}
+}
+
+func TestTheNewestConversationComesFirst(t *testing.T) {
+	line := func(at string) string { return message{Role: "user", At: at, Text: "word"}.line() }
+	panes := []pane{
+		{Block: "old", Name: "x", Index: writeLines(t, strings.TrimSuffix(line("2026-01-01T00:00:00Z"), "\n"))},
+		{Block: "new", Name: "y", Index: writeLines(t, strings.TrimSuffix(line("2026-06-01T00:00:00Z"), "\n"))},
+	}
+	if got := strings.Join(kinds(search(panes, "word")), " "); got != "said:new said:old" {
+		t.Fatalf("got %v", got)
+	}
+}
+
 func TestSearchIgnoresCaseAndNeedsEveryWord(t *testing.T) {
 	panes := []pane{{Block: "a", Name: "x", Index: writeLines(t, said("user", "Fix the FLOCK bug"), said("user", "flock only"))}}
 	results := search(panes, "bug flock")
-	if len(results) != 1 || results[0].Line != 1 {
+	if len(results) != 1 || results[0].Matches != 1 {
 		t.Fatalf("got %+v", results)
 	}
 }
@@ -65,28 +154,26 @@ func TestSearchFindsAnyAlphabet(t *testing.T) {
 	}
 }
 
-func TestTheNewestMessageComesFirst(t *testing.T) {
-	panes := []pane{{Block: "a", Name: "x", Index: writeLines(t, said("user", "word 1"), said("user", "other"), said("user", "word 3"))}}
-	results := search(panes, "word")
-	if len(results) != 2 || results[0].Line != 3 || results[1].Line != 1 {
-		t.Fatalf("got %+v", results)
+func TestIdenticalMessagesCountOnce(t *testing.T) {
+	p := pane{Name: "x", Index: writeLines(t, said("user", "a word"), said("assistant", "other"), said("user", "a word"))}
+	if got := search([]pane{p}, "word")[0].Matches; got != 1 {
+		t.Fatalf("got %d", got)
 	}
 }
 
-func TestResultsAreLimited(t *testing.T) {
-	var lines []string
-	for range 100 {
-		lines = append(lines, said("user", "word"))
+func TestMarkdownIsNotShownOrSearched(t *testing.T) {
+	p := pane{Name: "x", Index: writeLines(t, said("assistant", "## Result **the** `word` [Image #9] here"))}
+	display := search([]pane{p}, "word")[0].Display
+	for _, noise := range []string{"**", "`", "##", "Image"} {
+		if strings.Contains(display, noise) {
+			t.Errorf("%q in %q", noise, display)
+		}
 	}
-	var panes []pane
-	for range 20 {
-		panes = append(panes, pane{Name: "x", Index: writeLines(t, lines...)})
+	if !strings.Contains(display, "Result the "+hit+"word"+reset) {
+		t.Errorf("got %q", display)
 	}
-	if got := len(search(panes[:1], "word")); got != maxPerPane {
-		t.Errorf("one pane: %d results", got)
-	}
-	if got := len(search(panes, "word")); got != maxResults {
-		t.Errorf("all panes: %d results", got)
+	if got := search([]pane{p}, "image"); len(got) != 0 {
+		t.Errorf("found an image tag: %+v", got)
 	}
 }
 
@@ -94,7 +181,7 @@ func TestARowKeepsItsFields(t *testing.T) {
 	p := pane{Session: "s", Window: "w", Block: "b", Name: "x", Index: writeLines(t, said("user", "a word"))}
 	row := search([]pane{p}, "word")[0].row()
 	fields := strings.Split(row, "\t")
-	if len(fields) != 6 || fields[0] != "s" || fields[1] != "w" || fields[2] != "b" || fields[3] != kindSaid || fields[4] != "1" {
+	if len(fields) != 4 || fields[0] != "s" || fields[1] != "w" || fields[2] != "b" {
 		t.Fatalf("got %q", fields)
 	}
 }
@@ -108,21 +195,36 @@ func TestDisplayHasNoControlCharactersFromText(t *testing.T) {
 }
 
 func TestAround(t *testing.T) {
-	long := strings.Repeat("a", 300) + "needle" + strings.Repeat("b", 300)
-	got := around(long, "needle")
+	long := strings.Repeat("a ", 150) + "needle" + strings.Repeat(" b", 150)
+	got := around(long, "needle", 20, 80)
 	if !strings.Contains(got, "needle") || !strings.HasPrefix(got, "…") || !strings.HasSuffix(got, "…") {
 		t.Fatalf("got %q", got)
 	}
-	if short := "a needle"; around(short, "needle") != short {
+	if strings.Index(got, "needle") > 25 {
+		t.Fatalf("the word is far from the start: %q", got)
+	}
+	if short := "a needle"; around(short, "needle", 20, 80) != short {
 		t.Fatal("changed short text")
 	}
-	atEnd := strings.Repeat("a", 300) + "needle"
-	if !strings.Contains(around(atEnd, "needle"), "needle") {
+	if !strings.Contains(around(strings.Repeat("a", 300)+"needle", "needle", 20, 80), "needle") {
 		t.Fatal("lost a word at the end")
 	}
-	georgian := strings.Repeat("ა", 300) + "needle" + strings.Repeat("ბ", 300)
-	if !strings.Contains(around(georgian, "needle"), "needle") {
+	if !strings.Contains(around(strings.Repeat("ა", 300)+"needle"+strings.Repeat("ბ", 300), "needle", 20, 80), "needle") {
 		t.Fatal("lost a word after multi-byte text")
+	}
+}
+
+func TestAroundStartsAtAWholeWord(t *testing.T) {
+	got := around("first reduced-motion benchmark and then the needle is here", "needle", 20, 80)
+	if !strings.HasPrefix(got, "…and then the needle") && !strings.HasPrefix(got, "…then the needle") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestAroundPrefersTheStartOfAWord(t *testing.T) {
+	got := around("Japanese "+strings.Repeat("x ", 100)+"panes", "panes", 5, 20)
+	if !strings.HasSuffix(got, "panes") {
+		t.Fatalf("got %q", got)
 	}
 }
 
@@ -138,13 +240,61 @@ func TestHighlight(t *testing.T) {
 	}
 }
 
-func TestPreviewOfAMessageShowsItsNeighbours(t *testing.T) {
-	index := writeLines(t, said("user", "before"), said("assistant", "the word"), said("user", "after"))
-	got := preview([]pane{{Block: "b", Name: "x", Index: index}}, "b", kindSaid, 2, "word")
-	for _, want := range []string{"before", hit + "word" + reset, "after", "you", "claude"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("no %q in %q", want, got)
+func TestPreviewListsOnlyTheMatchesOfThePaneBestFirst(t *testing.T) {
+	index := writeLines(t, said("user", "the old word"), said("assistant", "other"), said("assistant", "the new word"), said("user", "a sword"))
+	got := preview([]pane{{Block: "b", Name: "paneName", Cwd: "/folder", Index: index}}, "b", "word", 60, 20)
+	newest, oldest, inside := strings.Index(got, "the new"), strings.Index(got, "the old"), strings.Index(got, "a s")
+	if newest < 0 || oldest < newest || inside < oldest {
+		t.Errorf("order in %q", got)
+	}
+	for _, unwanted := range []string{"other", "paneName", "/folder"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("%q in %q", unwanted, got)
 		}
+	}
+	if !strings.Contains(got, dim+"you: "+reset+"the old "+hit+"word"+reset) {
+		t.Errorf("no label in %q", got)
+	}
+}
+
+func TestPreviewShowsALimitedNumberOfMatches(t *testing.T) {
+	var lines []string
+	for i := range maxInPreview + 5 {
+		lines = append(lines, said("user", fmt.Sprintf("word %d", i)))
+	}
+	got := preview([]pane{{Block: "b", Index: writeLines(t, lines...)}}, "b", "word", 60, 20)
+	if count := strings.Count(got, "you: "); count != maxInPreview {
+		t.Fatalf("%d matches", count)
+	}
+}
+
+func TestPreviewWrapsAtWords(t *testing.T) {
+	index := writeLines(t, said("assistant", "the word and some more text that goes on and on"))
+	got := preview([]pane{{Block: "b", Index: index}}, "b", "word", 11, 20)
+	if !strings.Contains(got, "\nand some\n") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestWrap(t *testing.T) {
+	got := strings.Join(wrap("one two three", 7), "|")
+	if got != "one two|three" {
+		t.Fatalf("got %q", got)
+	}
+	if got := strings.Join(wrap("abcdefgh", 3), "|"); got != "abc|def|gh" {
+		t.Fatalf("a long word: %q", got)
+	}
+	if got := strings.Join(wrap("ა ბ გ", 3), "|"); got != "ა ბ|გ" {
+		t.Fatalf("multi-byte text: %q", got)
+	}
+}
+
+func TestLastLines(t *testing.T) {
+	if got := lastLines("a\nb\nc\n", 2); got != "b\nc" {
+		t.Fatalf("got %q", got)
+	}
+	if got := lastLines("a\n", 5); got != "a" {
+		t.Fatalf("got %q", got)
 	}
 }
 
@@ -158,16 +308,7 @@ func TestPathFromFileURL(t *testing.T) {
 }
 
 func TestPreviewOfNoRowIsEmpty(t *testing.T) {
-	if got := preview([]pane{{Block: "b", Name: "x"}}, "", "", 0, "word"); got != "" {
+	if got := preview([]pane{{Block: "b", Name: "x"}}, "", "word", 60, 20); got != "" {
 		t.Fatalf("got %q", got)
-	}
-}
-
-func TestAResultShowsTheTextBeforeThePlace(t *testing.T) {
-	p := pane{SessionLabel: "work", WindowLabel: "main", Name: "Fix the login", Index: writeLines(t, said("user", "a word"))}
-	display := search([]pane{p}, "word")[0].Display
-	text, place := strings.Index(display, "a "+hit+"word"), strings.Index(display, "work › Fix the login")
-	if text < 0 || place < 0 || text > place {
-		t.Fatalf("got %q", display)
 	}
 }

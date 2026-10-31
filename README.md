@@ -39,24 +39,26 @@ local has_jump = rexd and rexd.plugins["tornikegomareli.jump"]
 rex.bind("cmd+shift+k", has_jump and "jump_anywhere" or "session.switch")
 ```
 
-In the picker, Enter goes to the selected row, and Esc closes the picker.
+The picker has one row for each pane: where Enter goes, and the best match in that pane. The preview shows all the matches of the selected pane, or its screen if it has none. Enter goes to the selected pane, and Esc closes the picker.
 
 ## What it searches
 
-All the words you type must be in the same message or line. Results come in this order:
+All the words you type must be in the same message or line. Panes come in this order:
 
-| Results | Text | From |
+| Panes found by | Text | From |
 | --- | --- | --- |
-| Panes | Session, window and pane names, and the folder | Rex |
-| Conversations | What you and Claude Code wrote, the newest first | The transcripts in `~/.claude` |
-| Screens | The scrollback of the other panes | Rex |
+| Name | Session, window and pane names, and the folder | Rex |
+| Conversation | What you and Claude Code wrote, the newest first | The transcripts in `~/.claude` |
+| Screen | The scrollback of the other panes | Rex |
+
+A pane where your words only occur inside other words comes last: `panes` finds "split panes" before "Japanese".
 
 Tool calls, tool output and thinking are not searched.
 
 Limits:
 
 - It searches only conversations that are running in a pane now.
-- Enter goes to the pane. It cannot scroll Claude Code to the message, so the preview shows the message and the ones around it.
+- Enter goes to the pane. It cannot scroll Claude Code to the message, so the preview shows the message.
 - Rex keeps no scrollback for a program on the alternate screen. For other full-screen agents, such as Codex, only the visible screen is searched.
 
 ## Your data

@@ -51,16 +51,17 @@ func run(args []string) error {
 			return err
 		}
 		for _, r := range search(panes, rest[0]) {
-			fmt.Println(r.row())
+			fmt.Print(r.row(), "\x00") // A row has two lines, so it cannot end with one.
 		}
 		return nil
-	case command == "preview" && len(rest) == 4:
-		panes, err := loadSnapshot(os.Getenv(snapshotVariable), needsContent(rest[3]))
+	case command == "preview" && len(rest) == 2:
+		panes, err := loadSnapshot(os.Getenv(snapshotVariable), needsContent(rest[1]))
 		if err != nil {
 			return err
 		}
-		line, _ := strconv.Atoi(rest[2])
-		fmt.Print(preview(panes, rest[0], rest[1], line, rest[3]))
+		width, _ := strconv.Atoi(os.Getenv("FZF_PREVIEW_COLUMNS"))
+		height, _ := strconv.Atoi(os.Getenv("FZF_PREVIEW_LINES"))
+		fmt.Print(preview(panes, rest[0], rest[1], max(width, 1), max(height, 1)))
 		return nil
 	case command == "go" && len(rest) == 4:
 		if err := goTo(rest[0], rest[1], rest[2], rest[3]); err != nil {
@@ -108,15 +109,21 @@ func pick(client string) error {
 	}
 
 	me := shellQuote(self)
+	search := me + " search {q}"
 	cmd := exec.Command(fzf,
+		"--read0", "--gap", "--gap-line= ", "--gutter= ", "--no-separator", "--no-scrollbar", "--highlight-line", "--ellipsis=…",
 		"--disabled", "--ansi", "--layout=reverse", "--no-sort",
-		"--delimiter=\t", "--with-nth=6..",
-		"--prompt=Jump> ",
-		"--header=Pane names and words said in conversations. Enter goes there.",
-		"--preview="+me+" preview {3} {4} {5} {q}",
-		"--preview-window=right,40%,wrap,<110(down,45%,wrap)",
-		"--bind=start:reload("+me+" search {q})",
-		"--bind=change:reload("+me+" search {q})",
+		"--delimiter=\t", "--with-nth=4..",
+		"--prompt=› ",
+		"--ghost=Pane name or a word from a conversation",
+		"--info=inline-right",
+		`--info-command=[ "$FZF_TOTAL_COUNT" = 1 ] && echo 1 pane || echo "$FZF_TOTAL_COUNT panes"`,
+		"--preview="+me+" preview {3} {q}",
+		"--preview-window=right,45%,border-left,wrap,<50(down,45%,border-top,wrap)",
+		// The sync form keeps the old rows until the new ones are ready. The other
+		// form clears them first, and the list blinks on each key.
+		"--bind=start:reload-sync("+search+")",
+		"--bind=change:reload-sync("+search+")",
 		"--bind=enter:become("+me+" go {1} {2} {3} "+shellQuote(client)+")",
 	)
 	// fzf runs its commands with $SHELL, and a person's shell may be slow to start.
