@@ -81,7 +81,7 @@ func TestEveryLineFitsTheWindow(t *testing.T) {
 			m := open(t, width, height, long, pane{Block: "c", Name: "გამარჯობა მსოფლიო"})
 			typeText(m, "word")
 			lines := strings.Split(view(m), "\n")
-			if len(lines) > max(height, 6) {
+			if len(lines) > max(height, 7) {
 				t.Errorf("%dx%d: %d lines", width, height, len(lines))
 			}
 			for _, line := range lines {
@@ -484,5 +484,13 @@ func TestAnEmptyQueryShowsWhatEachConversationSaidLast(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("no %q in\n%s", want, out)
 		}
+	}
+}
+
+func TestTheBackgroundOfTheSelectedRowDoesNotStop(t *testing.T) {
+	m := open(t, 120, 30, demoPanes(t)...)
+	typeText(m, "panes")
+	if out := m.View(); strings.Contains(out, ";m") {
+		t.Fatalf("an empty parameter resets the colors: %q", out)
 	}
 }

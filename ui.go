@@ -146,7 +146,7 @@ func (m *model) mouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		row := msg.Y - tabsLineRow - 1
+		row := msg.Y - tabsLineRow - 2
 		if inPreview || row < 0 || row >= len(m.lineRows) || m.lineRows[row] < 0 {
 			return m, nil
 		}
@@ -329,7 +329,7 @@ func (m *model) captureSelected() tea.Cmd {
 }
 
 func (m *model) bodyHeight() int {
-	return max(m.height-5, 1)
+	return max(m.height-6, 1)
 }
 
 // span is text in one style.
@@ -341,7 +341,11 @@ func paint(spans []span, background string, width int) string {
 	used := 0
 	for _, s := range spans {
 		text := ansi.Truncate(s.text, width-used, "")
-		fmt.Fprintf(&out, "\x1b[0;%s;%sm%s", background, s.style, text)
+		style := background
+		if s.style != "" {
+			style += ";" + s.style
+		}
+		fmt.Fprintf(&out, "\x1b[0;%sm%s", style, text)
 		used += ansi.StringWidth(text)
 	}
 	fmt.Fprintf(&out, "\x1b[0;%sm%s\x1b[0m", background, strings.Repeat(" ", max(width-used, 0)))
@@ -381,7 +385,7 @@ func (m *model) View() string {
 		return ""
 	}
 	width := m.width
-	lines := []string{m.headerLine(width), m.ruleLine(width), m.tabsLine(width)}
+	lines := []string{m.headerLine(width), m.ruleLine(width), m.tabsLine(width), ""}
 	height := m.bodyHeight()
 	if width >= previewMinimumWidth {
 		list, preview := m.listLines(m.listWidth(), height), m.previewLines(width-m.listWidth()-3, height)
