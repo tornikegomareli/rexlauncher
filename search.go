@@ -1,49 +1,109 @@
 package main
 
 import (
-	"fmt"
 	"os"
 	"regexp"
 	"sort"
 	"strings"
 	"unicode"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 const (
-	maxInPreview = 20
-
-	// Characters of text around a match. A row keeps few before it, because fzf
-	// cuts a row at its end, and the match must stay in view.
-	rowBefore     = 20
-	rowLength     = 200
-	previewBefore = 200
-	previewLength = 800
-
 	kindPane   = "pane"
 	kindSaid   = "said"
 	kindScreen = "screen"
 
-	bold  = "\x1b[1m"
-	dim   = "\x1b[2m"
-	hit   = "\x1b[0;1;33m" // Starts with a reset, because a match stays bright in a dim row.
-	reset = "\x1b[0m"
+	maxInPreview = 20
+
+	// Characters of text around a match. A row keeps few before it, because it is
+	// cut at its end, and the match must stay in view.
+	rowBefore     = 8
+	rowLength     = 200
+	previewBefore = 200
+	previewLength = 800
 )
+
+// entry is one message or screen line of a pane, in the form the search needs.
+type entry struct {
+	Text  string
+	lower string
+	Label string
+	At    string
+}
+
+// messageEntries reads an index, the newest message first. Identical messages
+// count once.
+func messageEntries(path string) []entry {
+	lines := readLines(path)
+	seen := map[string]bool{}
+	var entries []entry
+	for i := len(lines) - 1; i >= 0; i-- {
+		message := parseMessage(lines[i])
+		text := clean(plain(message.Text))
+		if text == "" || seen[text] {
+			continue
+		}
+		seen[text] = true
+		e := entry{Text: text, lower: lowerRunes(text), At: message.At}
+		if message.Role == "user" {
+			e.Label = "you: "
+		}
+		entries = append(entries, e)
+	}
+	return entries
+}
+
+// screenEntries splits a screen's text, the newest line first.
+func screenEntries(text string) []entry {
+	lines := strings.Split(text, "\n")
+	seen := map[string]bool{}
+	var entries []entry
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(clean(lines[i]))
+		if line == "" || seen[line] {
+			continue
+		}
+		seen[line] = true
+		entries = append(entries, entry{Text: line, lower: lowerRunes(line)})
+	}
+	return entries
+}
+
+// match is an entry that holds the words of a query.
+type match struct {
+	entry
+	Strong bool // Each word occurs at the start of a word.
+}
 
 // result is one row of the picker. There is one for each pane, because Enter
 // goes to a pane, and cannot go to a message in it.
 type result struct {
-	Pane    pane
-	Kind    string // What found the pane.
-	Matches int    // Messages or lines that hold the words.
-	Display string
-	rank    int
-	at      string
+	Pane  pane
+	Kind  string  // What found the pane.
+	Named bool    // The name of the pane holds the words.
+	Found []match // The best first.
+	rank  int
+	at    string
 }
 
-// row is what fzf reads. It shows the display, and gives the other fields back
-// to the preview and to the jump.
-func (r result) row() string {
-	return strings.Join([]string{r.Pane.Session, r.Pane.Window, r.Pane.Block, r.Display}, "\t")
+// Matches is the number of messages or lines that hold the words.
+func (r result) Matches() int {
+	return len(r.Found)
+}
+
+// Heading is the name of the section that the row is in.
+func (r result) Heading() string {
+	switch r.rank {
+	case 0:
+		return "Panes"
+	case 1:
+		return "Conversations"
+	case 2:
+		return "Screens"
+	}
+	return "Partial matches"
 }
 
 // search finds panes by name first, then by the words said in their
@@ -60,20 +120,18 @@ func search(panes []pane, query string) []result {
 		if !named && len(found) == 0 {
 			continue
 		}
-		r := result{Pane: p, Kind: kindPane, Matches: len(found)}
+		r := result{Pane: p, Kind: kindPane, Named: named, Found: found}
 		strong := named && startsWords(name, words)
 		if !strong && len(found) > 0 && (found[0].Strong || !named) {
 			strong = found[0].Strong
-			r.Kind = kindScreen
-			r.rank = 2
-			if p.Index != "" {
+			r.Kind, r.rank = kindScreen, 2
+			if p.Conversation {
 				r.Kind, r.rank, r.at = kindSaid, 1, found[0].At
 			}
 		}
 		if !strong {
 			r.rank += 3
 		}
-		r.Display = p.display(words, found)
 		results = append(results, r)
 	}
 	sort.SliceStable(results, func(i, j int) bool {
@@ -85,48 +143,20 @@ func search(panes []pane, query string) []result {
 	return results
 }
 
-// match is one message or line of a pane that holds the words of a query.
-type match struct {
-	Text   string
-	Label  string
-	At     string
-	Strong bool // Each word occurs at the start of a word.
-}
-
 // matches returns the best first: those that are strong, and then the newest.
 func (p pane) matches(words []string) []match {
-	path := p.Index
-	if path == "" {
-		path = p.Screen
-	}
-	if path == "" || len(words) == 0 {
+	if len(words) == 0 {
 		return nil
 	}
-	lines := readLines(path)
-	seen := map[string]bool{}
 	var strong, partial []match
-	for i := len(lines) - 1; i >= 0; i-- {
-		// Most lines do not match, so do the cheap check first.
-		if !containsAll(lowerRunes(lines[i]), words) {
+	for _, e := range p.Text {
+		if !containsAll(e.lower, words) {
 			continue
 		}
-		m := match{Text: strings.TrimSpace(clean(lines[i]))}
-		if p.Index != "" {
-			message := parseMessage(lines[i])
-			m = match{Text: clean(plain(message.Text)), At: message.At}
-			if message.Role == "user" {
-				m.Label = "you: "
-			}
-		}
-		lower := lowerRunes(m.Text)
-		if seen[m.Text] || !containsAll(lower, words) {
-			continue
-		}
-		seen[m.Text] = true
-		if m.Strong = startsWords(lower, words); m.Strong {
-			strong = append(strong, m)
+		if startsWords(e.lower, words) {
+			strong = append(strong, match{e, true})
 		} else {
-			partial = append(partial, m)
+			partial = append(partial, match{e, false})
 		}
 	}
 	return append(strong, partial...)
@@ -140,31 +170,6 @@ func (p pane) title() string {
 		}
 	}
 	return "pane"
-}
-
-// display is two lines: where Enter goes, and why this pane is a result.
-func (p pane) display(words []string, found []match) string {
-	title := clean(p.title())
-	first := styled(title, words, bold)
-	if session := clean(p.SessionLabel); session != "" && !strings.EqualFold(session, title) {
-		first += dim + " · " + reset + styled(session, words, dim)
-	}
-	if len(found) > 1 {
-		first += dim + fmt.Sprintf("  %d matches", len(found)) + reset
-	}
-	if len(found) == 0 {
-		return first + "\n" + styled(clean(shortHome(p.Cwd)), words, dim)
-	}
-	label := ""
-	if found[0].Label != "" {
-		label = dim + found[0].Label + reset
-	}
-	return first + "\n" + label + styled(around(found[0].Text, words[0], rowBefore, rowLength), words, dim)
-}
-
-// styled draws text in a style, with the words marked.
-func styled(text string, words []string, style string) string {
-	return style + strings.ReplaceAll(highlight(text, words), reset, reset+style) + reset
 }
 
 var (
@@ -206,12 +211,21 @@ func clean(s string) string {
 	}, s)
 }
 
+func runesEqual(a, b []rune) bool {
+	for i := range b {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // find returns the position of a word in runes, preferring one at the start of
 // a word, and if it is at such a start. It returns -1 if the word is not there.
 func find(text, word []rune) (int, bool) {
 	first := -1
 	for i := 0; i+len(word) <= len(text); i++ {
-		if string(text[i:i+len(word)]) != string(word) {
+		if !runesEqual(text[i:], word) {
 			continue
 		}
 		if i == 0 || !unicode.IsLetter(text[i-1]) && !unicode.IsDigit(text[i-1]) {
@@ -259,38 +273,21 @@ func around(text, word string, before, length int) string {
 	return out
 }
 
-// highlight marks each place a word occurs.
-func highlight(text string, words []string) string {
-	runes := []rune(text)
+// marks says for each rune of text if it is part of a word.
+func marks(text string, words []string) []bool {
 	lower := []rune(lowerRunes(text))
-	marked := make([]bool, len(runes))
+	marked := make([]bool, len(lower))
 	for _, word := range words {
 		target := []rune(word)
 		for i := 0; i+len(target) <= len(lower); i++ {
-			if string(lower[i:i+len(target)]) == word {
+			if runesEqual(lower[i:], target) {
 				for j := range target {
 					marked[i+j] = true
 				}
 			}
 		}
 	}
-	var out strings.Builder
-	on := false
-	for i, r := range runes {
-		if marked[i] != on {
-			on = marked[i]
-			if on {
-				out.WriteString(hit)
-			} else {
-				out.WriteString(reset)
-			}
-		}
-		out.WriteRune(r)
-	}
-	if on {
-		out.WriteString(reset)
-	}
-	return out.String()
+	return marked
 }
 
 func shortHome(path string) string {
@@ -301,72 +298,15 @@ func shortHome(path string) string {
 	return path
 }
 
-// preview prints what the side of the picker shows for a row. The row already
-// names the pane, so this is its matches, or its screen if it has none.
-func preview(panes []pane, block, query string, width, height int) string {
-	var p pane
-	for _, candidate := range panes {
-		if candidate.Block == block {
-			p = candidate
-		}
-	}
-	if p.Block == "" {
-		return "" // No row is selected.
-	}
-	words := strings.Fields(lowerRunes(query))
-	found := p.matches(words)
-	if len(found) == 0 {
-		text, err := runRex("capture", "-s", p.Session, "-b", p.Block, "--trim")
-		if err != nil {
-			return err.Error()
-		}
-		lines := strings.Split(lastLines(string(text), height), "\n")
-		for i := range lines {
-			lines[i] = clean(lines[i])
-		}
-		return strings.Join(lines, "\n")
-	}
-	var parts []string
-	for _, m := range found[:min(maxInPreview, len(found))] {
-		lines := wrap(m.Label+around(m.Text, words[0], previewBefore, previewLength), width)
-		lines[0] = strings.TrimPrefix(lines[0], m.Label)
-		for i := range lines {
-			lines[i] = highlight(lines[i], words)
-		}
-		if m.Label != "" {
-			lines[0] = dim + m.Label + reset + lines[0]
-		}
-		parts = append(parts, strings.Join(lines, "\n"))
-	}
-	return strings.Join(parts, "\n\n")
-}
-
 // wrap splits text into lines at spaces. A word longer than a line is split.
 func wrap(text string, width int) []string {
-	var lines []string
-	var line []rune
-	for _, field := range strings.Fields(text) {
-		word := []rune(field)
-		if len(line) > 0 && len(line)+1+len(word) > width {
-			lines = append(lines, string(line))
-			line = nil
-		}
-		if len(line) > 0 {
-			line = append(line, ' ')
-		}
-		for len(word) > width {
-			lines = append(lines, string(word[:width]))
-			word = word[width:]
-		}
-		line = append(line, word...)
-	}
-	return append(lines, string(line))
+	return strings.Split(ansi.Wrap(text, width, ""), "\n")
 }
 
 // lastLines returns the end of text. A screen's newest text is at its end.
-func lastLines(text string, n int) string {
+func lastLines(text string, n int) []string {
 	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
-	return strings.Join(lines[max(0, len(lines)-n):], "\n")
+	return lines[max(0, len(lines)-n):]
 }
 
 func readLines(path string) []string {

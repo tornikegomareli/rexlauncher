@@ -140,7 +140,7 @@ func TestFindsAPaneByNameByWhatWasSaidAndByItsScreen(t *testing.T) {
 	server(t)
 	agent := newSession(t, "agent-session")
 	shell := newSession(t, "shell-session")
-	claude, cache, snapshot := t.TempDir(), t.TempDir(), t.TempDir()
+	claude, cache := t.TempDir(), t.TempDir()
 
 	liveConversation(t, claude, agent, "conv-1", "Fix the login",
 		userLine("why does zebrafish fail"),
@@ -153,14 +153,11 @@ func TestFindsAPaneByNameByWhatWasSaidAndByItsScreen(t *testing.T) {
 
 	take := func() []pane {
 		t.Helper()
-		if err := takeSnapshot(snapshot, "", claude, cache); err != nil {
-			t.Fatal(err)
-		}
-		panes, err := loadSnapshot(snapshot, true)
+		panes, conversations, err := loadPanes("", claude)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return panes
+		return loadText(panes, conversations, cache)
 	}
 
 	// The shell prints after a moment, and the snapshot is fixed when taken.
@@ -203,10 +200,10 @@ func TestFindsAPaneByNameByWhatWasSaidAndByItsScreen(t *testing.T) {
 	}
 
 	// The picker's own pane is not a result.
-	if err := takeSnapshot(snapshot, shell.Block, claude, cache); err != nil {
+	panes, _, err := loadPanes(shell.Block, claude)
+	if err != nil {
 		t.Fatal(err)
 	}
-	panes, _ = loadSnapshot(snapshot, true)
 	if got := blocks("shell-session"); got != "" {
 		t.Errorf("found itself: %s", got)
 	}
@@ -257,26 +254,5 @@ func TestRefusesAServerThatDoesNotHoldItsOwnSession(t *testing.T) {
 	}
 	if err := checkServer(""); err == nil {
 		t.Fatal("no error outside of Rex")
-	}
-}
-
-func TestThePaneListIsReadyBeforeTheirContent(t *testing.T) {
-	server(t)
-	newSession(t, "only")
-	snapshot, cache := t.TempDir(), t.TempDir()
-	if err := takeSnapshot(snapshot, "", t.TempDir(), cache); err != nil {
-		t.Fatal(err)
-	}
-	for _, withContent := range []bool{false, true} {
-		panes, err := loadSnapshot(snapshot, withContent)
-		if err != nil || len(panes) == 0 {
-			t.Fatalf("withContent %v: %v, %+v", withContent, err, panes)
-		}
-		if withContent && panes[0].Screen == "" {
-			t.Errorf("no screen in %+v", panes[0])
-		}
-		if !withContent && panes[0].Screen != "" {
-			t.Errorf("a screen in the first list: %+v", panes[0])
-		}
 	}
 }

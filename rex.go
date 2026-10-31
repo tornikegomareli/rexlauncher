@@ -17,17 +17,64 @@ const maxConcurrent = 8
 
 // pane is one terminal in Rex, as it was when the picker opened.
 type pane struct {
-	Session      string `json:"session"`
-	SessionLabel string `json:"session_label"`
-	Window       string `json:"window"`
-	WindowLabel  string `json:"window_label"`
-	Block        string `json:"block"`
-	Name         string `json:"name"`
-	Cwd          string `json:"cwd"`
-	// Index is the path of the conversation's index, for a Claude Code pane.
-	Index string `json:"index,omitempty"`
-	// Screen is the path of the captured text, for any other pane.
-	Screen string `json:"screen,omitempty"`
+	Session      string
+	SessionLabel string
+	Window       string
+	WindowLabel  string
+	Block        string
+	Name         string
+	Cwd          string
+	// Conversation says if a Claude Code session runs in the pane.
+	Conversation bool
+	// Text is what the search reads: the conversation, or the scrollback of any
+	// other pane. The newest comes first.
+	Text []entry
+}
+
+// loadPanes lists the panes, with the names of their conversations. It is enough
+// to show the picker.
+func loadPanes(self, claude string) ([]pane, map[string]conversation, error) {
+	panes, err := listPanes(self)
+	if err != nil {
+		return nil, nil, err
+	}
+	conversations := findConversations(claude)
+	for i := range panes {
+		if c, ok := conversations[panes[i].Block]; ok {
+			panes[i].Conversation = true
+			if c.Name != "" {
+				panes[i].Name = c.Name
+			}
+		}
+	}
+	return panes, conversations, nil
+}
+
+// loadText returns the panes with their text. It can take seconds, if a
+// conversation was not indexed before.
+func loadText(panes []pane, conversations map[string]conversation, index string) []pane {
+	loaded := append([]pane(nil), panes...)
+	forEach(len(loaded), func(i int) {
+		p := &loaded[i]
+		if c, ok := conversations[p.Block]; ok {
+			if path, err := updateIndex(index, c.ID, c.Transcript); err == nil {
+				p.Text = messageEntries(path)
+				return
+			}
+		}
+		// Rex keeps a terminal's scrollback, except for a program that draws on
+		// the alternate screen. Claude Code does, so its index comes first.
+		if text, err := runRex("capture", "-s", p.Session, "-b", p.Block, "--trim", "--unwrap"); err == nil {
+			p.Text = screenEntries(string(text))
+		}
+	})
+	return loaded
+}
+
+// captureScreen reads what a pane shows now.
+func captureScreen(p pane) (string, error) {
+	text, err := runRex("capture", "-s", p.Session, "-b", p.Block, "--trim")
+	return string(text), err
 }
 
 // runRex calls rex. It never starts a server: the picker runs inside one.

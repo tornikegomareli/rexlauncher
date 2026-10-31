@@ -6,11 +6,8 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"os/exec"
-	"os/signal"
-	"strconv"
-	"strings"
-	"syscall"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 func main() {
@@ -25,7 +22,6 @@ func main() {
 // when this program exits.
 func waitForEnter() {
 	fmt.Fprintln(os.Stderr, "Press Enter to close.")
-	// Not stdin: fzf does not hand it to the command it becomes.
 	tty, err := os.Open("/dev/tty")
 	if err != nil {
 		return
@@ -35,124 +31,47 @@ func waitForEnter() {
 }
 
 func run(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("usage: rex-jump pick [CLIENT]")
+	switch {
+	case len(args) == 1 && args[0] == "pick":
+		return pick("")
+	case len(args) == 2 && args[0] == "pick":
+		return pick(args[1])
 	}
-	switch command, rest := args[0], args[1:]; {
-	case command == "pick" && len(rest) <= 1:
-		client := ""
-		if len(rest) == 1 {
-			client = rest[0]
-		}
-		return pick(client)
-	case command == "search" && len(rest) == 1:
-		panes, err := loadSnapshot(os.Getenv(snapshotVariable), needsContent(rest[0]))
-		if err != nil {
-			return err
-		}
-		for _, r := range search(panes, rest[0]) {
-			fmt.Print(r.row(), "\x00") // A row has two lines, so it cannot end with one.
-		}
-		return nil
-	case command == "preview" && len(rest) == 2:
-		panes, err := loadSnapshot(os.Getenv(snapshotVariable), needsContent(rest[1]))
-		if err != nil {
-			return err
-		}
-		width, _ := strconv.Atoi(os.Getenv("FZF_PREVIEW_COLUMNS"))
-		height, _ := strconv.Atoi(os.Getenv("FZF_PREVIEW_LINES"))
-		fmt.Print(preview(panes, rest[0], rest[1], max(width, 1), max(height, 1)))
-		return nil
-	case command == "go" && len(rest) == 4:
-		if err := goTo(rest[0], rest[1], rest[2], rest[3]); err != nil {
-			// fzf exits with this program, and pick would report it a second time.
-			fmt.Fprintln(os.Stderr, "rex-jump:", err)
-			waitForEnter()
-		}
-		return nil
-	}
-	return fmt.Errorf("unknown command: %s", strings.Join(args, " "))
+	return fmt.Errorf("usage: rex-jump pick [CLIENT]")
 }
 
-// pick shows the picker. fzf only draws here: this program does the matching,
-// because its results are not all lines of one list.
+// pick shows the picker, and goes to the pane that the person chose.
 func pick(client string) error {
-	fzf, err := exec.LookPath("fzf")
-	if err != nil {
-		return fmt.Errorf("this plugin needs fzf. Install it, for example with: brew install fzf")
-	}
 	if err := checkServer(os.Getenv("REX_SESSION")); err != nil {
 		return err
 	}
-	self, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	snapshot, err := os.MkdirTemp("", "rex-jump")
-	if err != nil {
-		return err
-	}
-	defer os.RemoveAll(snapshot)
-
-	// The snapshot holds terminal text. Remove it even if the layer is closed.
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, syscall.SIGHUP, syscall.SIGTERM)
-	go func() {
-		<-signals
-		os.RemoveAll(snapshot)
-		os.Exit(1)
-	}()
-
 	index, err := cacheDir()
 	if err != nil {
 		return err
 	}
-
-	me := shellQuote(self)
-	search := me + " search {q}"
-	cmd := exec.Command(fzf,
-		"--read0", "--gap", "--gap-line= ", "--gutter= ", "--no-separator", "--no-scrollbar", "--highlight-line", "--ellipsis=…",
-		"--disabled", "--ansi", "--layout=reverse", "--no-sort",
-		"--delimiter=\t", "--with-nth=4..",
-		"--prompt=› ",
-		"--ghost=Pane name or a word from a conversation",
-		"--info=inline-right",
-		`--info-command=[ "$FZF_TOTAL_COUNT" = 1 ] && echo 1 pane || echo "$FZF_TOTAL_COUNT panes"`,
-		"--preview="+me+" preview {3} {q}",
-		"--preview-window=right,45%,border-left,wrap,<50(down,45%,border-top,wrap)",
-		// The sync form keeps the old rows until the new ones are ready. The other
-		// form clears them first, and the list blinks on each key.
-		"--bind=start:reload-sync("+search+")",
-		"--bind=change:reload-sync("+search+")",
-		"--bind=enter:become("+me+" go {1} {2} {3} "+shellQuote(client)+")",
-	)
-	// fzf runs its commands with $SHELL, and a person's shell may be slow to start.
-	cmd.Env = append(os.Environ(), "SHELL=/bin/sh", snapshotVariable+"="+snapshot)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	if err := cmd.Start(); err != nil {
+	var conversations map[string]conversation
+	picker := &model{
+		loadPanes: func() ([]pane, error) {
+			panes, found, err := loadPanes(os.Getenv("REX_BLOCK"), claudeDir())
+			conversations = found
+			return panes, err
+		},
+		loadText: func(panes []pane) []pane {
+			pruneIndex(index)
+			return loadText(panes, conversations, index)
+		},
+		capture: captureScreen,
+	}
+	if _, err := tea.NewProgram(picker, tea.WithAltScreen()).Run(); err != nil {
 		return err
 	}
-
-	// The picker opens at once, and a search waits for what it needs.
-	failed := make(chan error, 1)
-	go func() {
-		pruneIndex(index)
-		if err := takeSnapshot(snapshot, os.Getenv("REX_BLOCK"), claudeDir(), index); err != nil {
-			failed <- err
-			cmd.Process.Signal(syscall.SIGTERM)
-		}
-	}()
-
-	err = cmd.Wait()
-	select {
-	case err := <-failed:
-		return err
-	default:
+	if picker.err != nil {
+		return picker.err
 	}
-	if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 130 {
-		return nil // Escape.
+	if picker.chosen == nil {
+		return nil
 	}
-	return err
+	return goTo(picker.chosen.Session, picker.chosen.Window, picker.chosen.Block, client)
 }
 
 // goTo shows a pane. The server focuses the block in its session, and the app
@@ -173,8 +92,4 @@ func goTo(session, window, block, client string) error {
 	}
 	_, err = runRex(selectArgs...)
 	return err
-}
-
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
