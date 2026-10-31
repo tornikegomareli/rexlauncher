@@ -5,11 +5,20 @@ A [rexd](https://github.com/tornikegomareli/rexd) plugin for [Rex](https://www.s
 Type part of a name, or a word you remember from a conversation:
 
 ```
-Jump> zebrafish
-  2/2
-  Pane names and words said in conversations. Enter goes there.
-▌ claude  The zebrafish migration failed because the lock was held.  shop › Fix the checkout
-  you  Please explain why the zebrafish migration failed last night  shop › Fix the checkout
+ › zebrafish                                                              1 pane
+────────────────────────────────────────────────────────────────────────────────
+  All   Panes   Conversations   Screens
+ Conversations                                │ The zebrafish migration failed
+▌ Fix the checkout  The zebrafish migrati…  2 │ because the lock was held.
+                                              │
+                                              │ you: Please explain why the
+                                              │ zebrafish migration failed
+                                              │ ───────────────────────────────
+                                              │ Session  shop
+                                              │ Folder   ~/Development/shop
+                                              │ Matches  2
+────────────────────────────────────────────────────────────────────────────────
+ ↵ Go to pane   tab Filter   esc Close                                      1/1
 ```
 
 ## Install
@@ -21,7 +30,6 @@ rexd install tornikegomareli/rex-jump
 It needs:
 
 - [rexd](https://github.com/tornikegomareli/rexd) and Go, to build the plugin.
-- [fzf](https://github.com/junegunn/fzf) 0.38 or newer. The picker tells you if it is missing.
 - Remote Control, in Rex's Settings under Rex Server. Rex only lets a program outside the app change the session it shows when this is on. Without it, Enter still focuses the pane in its session, and shows Rex's error.
 
 ## Keys
@@ -39,7 +47,20 @@ local has_jump = rexd and rexd.plugins["tornikegomareli.jump"]
 rex.bind("cmd+shift+k", has_jump and "jump_anywhere" or "session.switch")
 ```
 
-The picker has one row for each pane: where Enter goes, and the best match in that pane. The preview shows all the matches of the selected pane, or its screen if it has none. Enter goes to the selected pane, and Esc closes the picker.
+| Action | Key |
+| --- | --- |
+| Search | Type |
+| Move in the list | Up, Down, Ctrl+P, Ctrl+N |
+| Move by a page, or to the first or last row | PageUp, PageDown, Home, End |
+| Go to the selected pane | Enter, or click the selected row |
+| Filter: All, Panes, Conversations, Screens | Tab, Shift+Tab |
+| Scroll the preview | Shift+Up, Shift+Down, or the wheel |
+| Delete a word, or the whole query | Ctrl+W, Ctrl+U |
+| Close | Esc |
+
+The picker has one row for each pane: its name, and the best match in it. With a window of 72 columns or more, the right side has a preview: all the matches of the selected pane, or its live screen with colors if it has no match. The details of the pane are below the preview.
+
+With no query, the picker lists the conversations that changed last, and then the other panes. A pane in the window of the picker is not suggested, because it is behind the picker.
 
 ## What it searches
 
@@ -51,7 +72,7 @@ All the words you type must be in the same message or line. Panes come in this o
 | Conversation | What you and Claude Code wrote, the newest first | The transcripts in `~/.claude` |
 | Screen | The scrollback of the other panes | Rex |
 
-A pane where your words only occur inside other words comes last: `panes` finds "split panes" before "Japanese".
+A pane where your words only occur inside other words comes last: `panes` finds "split panes" before "Japanese". A pane name also matches with letters left out: `tlbr` finds `tilebar`.
 
 Tool calls, tool output and thinking are not searched.
 
@@ -63,7 +84,7 @@ Limits:
 
 ## Your data
 
-Nothing leaves your machine. A transcript is mostly tool output, so the plugin keeps an index with only the text above, in your cache folder (`~/Library/Caches/rex-jump` on macOS). Only you can read these files. Each one is deleted 30 days after its conversation was last searched. While the picker is open, the text of your panes is in a private temporary folder, which it deletes when it closes.
+Nothing leaves your machine. A transcript is mostly tool output, so the plugin keeps an index with only the text above, in your cache folder (`~/Library/Caches/rex-jump` on macOS). Only you can read these files. Each one is deleted 30 days after its conversation was last searched. The text of your other panes stays in memory while the picker is open.
 
 ## Develop
 
