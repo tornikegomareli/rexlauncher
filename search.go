@@ -11,7 +11,7 @@ import (
 const (
 	maxPerPane = 20
 	maxResults = 300
-	snippet    = 110 // Characters of text shown around a match.
+	snippet    = 80 // Characters of text shown around a match.
 
 	kindPane   = "pane"
 	kindSaid   = "said"
@@ -96,7 +96,8 @@ func searchFile(p pane, path, kind string, words []string) []result {
 		if !containsAll(lowerRunes(text), words) {
 			continue
 		}
-		display := dim + clean(p.SessionLabel+" › "+p.WindowLabel) + reset + "  " + label + highlight(around(clean(text), words[0]), words)
+		// The text comes first, because fzf cuts a long row at its end.
+		display := label + highlight(around(clean(text), words[0]), words) + "  " + dim + clean(p.SessionLabel+" › "+p.Name) + reset
 		results = append(results, result{Pane: p, Kind: kind, Line: i + 1, Display: display})
 	}
 	return results
@@ -205,6 +206,9 @@ func preview(panes []pane, block, kind string, line int, query string) string {
 		if candidate.Block == block {
 			p = candidate
 		}
+	}
+	if p.Block == "" {
+		return "" // No row is selected.
 	}
 	words := strings.Fields(lowerRunes(query))
 	head := bold + clean(p.place()) + reset + "\n" + dim + clean(shortHome(p.Cwd)) + reset + "\n\n"

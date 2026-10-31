@@ -156,3 +156,18 @@ func TestPathFromFileURL(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestPreviewOfNoRowIsEmpty(t *testing.T) {
+	if got := preview([]pane{{Block: "b", Name: "x"}}, "", "", 0, "word"); got != "" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestAResultShowsTheTextBeforeThePlace(t *testing.T) {
+	p := pane{SessionLabel: "work", WindowLabel: "main", Name: "Fix the login", Index: writeLines(t, said("user", "a word"))}
+	display := search([]pane{p}, "word")[0].Display
+	text, place := strings.Index(display, "a "+hit+"word"), strings.Index(display, "work › Fix the login")
+	if text < 0 || place < 0 || text > place {
+		t.Fatalf("got %q", display)
+	}
+}

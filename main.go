@@ -57,7 +57,12 @@ func run(args []string) error {
 		fmt.Print(preview(panes, rest[0], rest[1], line, rest[3]))
 		return nil
 	case command == "go" && len(rest) == 4:
-		return goTo(rest[0], rest[1], rest[2], rest[3])
+		if err := goTo(rest[0], rest[1], rest[2], rest[3]); err != nil {
+			// fzf exits with this program, and pick would report it a second time.
+			fmt.Fprintln(os.Stderr, "rex-jump:", err)
+			waitForEnter()
+		}
+		return nil
 	}
 	return fmt.Errorf("unknown command: %s", strings.Join(args, " "))
 }
@@ -106,9 +111,9 @@ func pick(client string) error {
 		"--disabled", "--ansi", "--layout=reverse", "--no-sort",
 		"--delimiter=\t", "--with-nth=6..",
 		"--prompt=Jump> ",
-		"--header=Type a pane's name or words from its conversation. Enter goes there.",
+		"--header=Pane names and words said in conversations. Enter goes there.",
 		"--preview="+me+" preview {3} {4} {5} {q}",
-		"--preview-window=right,45%,wrap",
+		"--preview-window=right,40%,wrap,<110(down,45%,wrap)",
 		"--bind=start:reload("+me+" search {q})",
 		"--bind=change:reload("+me+" search {q})",
 		"--bind=enter:become("+me+" go {1} {2} {3} "+shellQuote(client)+")",
@@ -131,12 +136,15 @@ func goTo(session, window, block, client string) error {
 	if err != nil {
 		return err
 	}
-	var args []string
+	selectArgs := []string{"do", "session.select", "session_id=" + session, "window_id=" + window}
 	if client != "" {
-		args = append(args, "-C", client)
+		if _, err := runRex(append([]string{"-C", client}, selectArgs...)...); err == nil {
+			return nil
+		}
+		// The client that opened the picker can be gone: "rex do jump_anywhere" is
+		// one. Rex then uses the app, if one is connected.
 	}
-	args = append(args, "do", "session.select", "session_id="+session, "window_id="+window)
-	_, err = runRex(args...)
+	_, err = runRex(selectArgs...)
 	return err
 }
 

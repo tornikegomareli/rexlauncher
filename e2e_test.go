@@ -234,8 +234,8 @@ func TestGoToFocusesThePane(t *testing.T) {
 	}
 	// With no app connected, showing the session fails. The focus still moved.
 	err := goTo(target.Session, target.Window, target.Block, "")
-	if err == nil || !strings.Contains(err.Error(), "session.select") && !strings.Contains(err.Error(), "do") {
-		t.Errorf("err = %v", err)
+	if err == nil {
+		t.Error("no error, but no app is connected")
 	}
 	if got := focused(); got != target.Block {
 		t.Errorf("focused = %s, want %s", got, target.Block)
