@@ -14,6 +14,7 @@ const (
 	previewMinimumWidth = 72
 	refreshInterval     = 600 * time.Millisecond
 	metadataRows        = 3
+	tabsLineRow         = 2
 
 	// SGR parameters. They come from the terminal's palette, so the picker follows
 	// a light or a dark theme.
@@ -45,6 +46,8 @@ type model struct {
 	screens    map[string]string
 	capturing  bool
 	previewTop int
+	// lineRows has the row at each line of the list, or -1, for the mouse.
+	lineRows []int
 
 	width, height int
 
@@ -108,8 +111,58 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(tick(), m.captureSelected())
 	case tea.KeyMsg:
 		return m.key(msg)
+	case tea.MouseMsg:
+		return m.mouse(msg)
 	}
 	return m, nil
+}
+
+func (m *model) mouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if msg.Action != tea.MouseActionPress {
+		return m, nil
+	}
+	inPreview := m.width >= previewMinimumWidth && msg.X >= m.listWidth()
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		if inPreview {
+			m.previewTop = max(m.previewTop-1, 0)
+			return m, nil
+		}
+		return m, m.move(m.selected - 1)
+	case tea.MouseButtonWheelDown:
+		if inPreview {
+			m.previewTop++
+			return m, nil
+		}
+		return m, m.move(m.selected + 1)
+	case tea.MouseButtonLeft:
+		if msg.Y == tabsLineRow {
+			x := 1
+			for i, filter := range filters {
+				if msg.X >= x && msg.X < x+len(filter)+2 {
+					return m, m.setFilter(i)
+				}
+				x += len(filter) + 3
+			}
+			return m, nil
+		}
+		row := msg.Y - tabsLineRow - 1
+		if inPreview || row < 0 || row >= len(m.lineRows) || m.lineRows[row] < 0 {
+			return m, nil
+		}
+		if m.lineRows[row] == m.selected {
+			return m.key(tea.KeyMsg{Type: tea.KeyEnter})
+		}
+		return m, m.move(m.lineRows[row])
+	}
+	return m, nil
+}
+
+func (m *model) listWidth() int {
+	if m.width < previewMinimumWidth {
+		return m.width
+	}
+	return m.width * 58 / 100
 }
 
 func (m *model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -331,8 +384,7 @@ func (m *model) View() string {
 	lines := []string{m.headerLine(width), m.ruleLine(width), m.tabsLine(width)}
 	height := m.bodyHeight()
 	if width >= previewMinimumWidth {
-		listWidth := width * 58 / 100
-		list, preview := m.listLines(listWidth, height), m.previewLines(width-listWidth-3, height)
+		list, preview := m.listLines(m.listWidth(), height), m.previewLines(width-m.listWidth()-3, height)
 		for i := range list {
 			lines = append(lines, list[i]+"\x1b[2m │ \x1b[0m"+preview[i])
 		}
@@ -394,6 +446,7 @@ func (m *model) tabsLine(width int) string {
 func (m *model) listLines(width, height int) []string {
 	rows := m.visible()
 	lines := make([]string, 0, height)
+	m.lineRows = nil
 	if len(rows) == 0 {
 		text := "No pane has these words"
 		switch {
@@ -438,10 +491,13 @@ func (m *model) listLines(width, height int) []string {
 			switch {
 			case it.gap:
 				lines = append(lines, strings.Repeat(" ", width))
+				m.lineRows = append(m.lineRows, -1)
 			case it.heading:
 				lines = append(lines, paint([]span{{" " + cut(rows[it.row].Heading(), width-1), styleDim}}, "49", width))
+				m.lineRows = append(m.lineRows, -1)
 			default:
 				lines = append(lines, m.rowLine(rows[it.row], width, it.row == m.selected))
+				m.lineRows = append(m.lineRows, it.row)
 			}
 		}
 	}

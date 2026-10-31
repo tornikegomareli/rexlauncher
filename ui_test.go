@@ -400,3 +400,76 @@ func TestThePreviewReadsTheScreenAgainOnTheTimer(t *testing.T) {
 		t.Fatalf("%d reads, then %d: %s", before, reads, view(m))
 	}
 }
+
+func click(m *model, x, y int) tea.Cmd {
+	_, cmd := m.Update(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	return cmd
+}
+
+func wheel(m *model, x, y int, button tea.MouseButton) {
+	m.Update(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: button})
+}
+
+func lineOf(t *testing.T, m *model, text string) int {
+	t.Helper()
+	for i, line := range strings.Split(view(m), "\n") {
+		if strings.Contains(line, text) {
+			return i
+		}
+	}
+	t.Fatalf("no %q in\n%s", text, view(m))
+	return 0
+}
+
+func TestClickingARowSelectsItAndClickingItAgainGoes(t *testing.T) {
+	m := open(t, 120, 30, demoPanes(t)...)
+	typeText(m, "panes")
+	click(m, 5, lineOf(t, m, "build"))
+	if r, _ := m.current(); r.Pane.Block != "shell" || m.chosen != nil {
+		t.Fatalf("selected %s, chose %+v", r.Pane.Block, m.chosen)
+	}
+	cmd := click(m, 5, lineOf(t, m, "build"))
+	if m.chosen == nil || m.chosen.Block != "shell" {
+		t.Fatalf("chose %+v", m.chosen)
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("the picker did not close")
+	}
+}
+
+func TestClickingAHeadingOrTheEmptyListDoesNothing(t *testing.T) {
+	m := open(t, 120, 30, demoPanes(t)...)
+	typeText(m, "panes")
+	before := m.selected
+	click(m, 5, lineOf(t, m, " Conversations "))
+	click(m, 5, 28)
+	if m.selected != before || m.chosen != nil {
+		t.Fatalf("selected %d, chose %+v", m.selected, m.chosen)
+	}
+}
+
+func TestClickingAFilterChoosesIt(t *testing.T) {
+	m := open(t, 120, 30, demoPanes(t)...)
+	line := strings.Split(view(m), "\n")[2]
+	click(m, strings.Index(line, "Screens"), 2)
+	if filters[m.filter] != "Screens" {
+		t.Fatalf("filter %s", filters[m.filter])
+	}
+}
+
+func TestTheWheelMovesTheListOrThePreview(t *testing.T) {
+	m := open(t, 120, 30, demoPanes(t)...)
+	wheel(m, 5, 10, tea.MouseButtonWheelDown)
+	if m.selected != 1 {
+		t.Fatalf("selected %d", m.selected)
+	}
+	wheel(m, 100, 10, tea.MouseButtonWheelDown)
+	if m.selected != 1 || m.previewTop != 1 {
+		t.Fatalf("selected %d, preview at %d", m.selected, m.previewTop)
+	}
+	wheel(m, 100, 10, tea.MouseButtonWheelUp)
+	wheel(m, 5, 10, tea.MouseButtonWheelUp)
+	if m.selected != 0 || m.previewTop != 0 {
+		t.Fatalf("selected %d, preview at %d", m.selected, m.previewTop)
+	}
+}

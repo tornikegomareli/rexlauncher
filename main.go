@@ -62,7 +62,7 @@ func pick(client string) error {
 		},
 		capture: captureScreen,
 	}
-	if _, err := tea.NewProgram(picker, tea.WithAltScreen()).Run(); err != nil {
+	if _, err := tea.NewProgram(picker, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
 		return err
 	}
 	if picker.err != nil {
