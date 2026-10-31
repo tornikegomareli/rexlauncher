@@ -1,0 +1,12 @@
+id = "tornikegomareli.jump"
+name = "Jump anywhere"
+version = "0.1.0"
+description = "Search every Rex pane, and the words said in its Claude Code conversation, then go there."
+homepage = "https://github.com/tornikegomareli/rex-jump"
+license = "MIT"
+rex_api = 7
+
+config = "rex/config.lua"
+
+[[build]]
+run = ["go", "build", "-o", "bin/rex-jump", "."]
