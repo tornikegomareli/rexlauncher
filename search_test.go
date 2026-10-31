@@ -235,3 +235,50 @@ func TestPathFromFileURL(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestANameMatchesWithLettersLeftOut(t *testing.T) {
+	for _, c := range []struct{ query, name string }{
+		{"tlbr", "tilebar"},
+		{"jl", "jolt-landing"},
+		{"splt", "Split pane"},
+	} {
+		results := search([]pane{{Block: "a", Name: c.name}}, c.query)
+		if len(results) != 1 || results[0].Kind != kindPane || results[0].Heading() != "Panes" {
+			t.Errorf("%s in %s: got %+v", c.query, c.name, results)
+		}
+	}
+}
+
+func TestLettersFarApartDoNotMatchAName(t *testing.T) {
+	for _, c := range []struct{ query, name string }{
+		{"panes", "Panel of notes"},
+		{"tlbr", "the long road home to bar"},
+		{"r", "tilebar"},
+		{"ilebar", "tilebar x"}, // Found as text in a word, and it is not at the start of one.
+	} {
+		for _, r := range search([]pane{{Block: "a", Name: c.name}}, c.query) {
+			if r.Letters != nil {
+				t.Errorf("%s in %s: got %+v", c.query, c.name, r)
+			}
+		}
+	}
+}
+
+func TestAWholeNameComesBeforeLettersLeftOut(t *testing.T) {
+	panes := []pane{{Block: "letters", Name: "tilebar"}, {Block: "whole", Name: "tlbr tools"}}
+	if got := strings.Join(kinds(search(panes, "tlbr")), " "); got != "pane:whole pane:letters" {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestWordsInThePaneBeatLettersOfItsName(t *testing.T) {
+	panes := []pane{{Block: "letters", Name: "tilebar"}, talking(t, "talk", "x", said("user", "the tlbr file"))}
+	results := search(panes, "tlbr")
+	if got := strings.Join(kinds(results), " "); got != "pane:letters said:talk" {
+		t.Fatalf("got %v", got)
+	}
+	both := talking(t, "both", "tilebar", said("user", "the tlbr file"))
+	if got := search([]pane{both}, "tlbr")[0]; got.Kind != kindSaid || got.Letters != nil {
+		t.Fatalf("got %+v", got)
+	}
+}

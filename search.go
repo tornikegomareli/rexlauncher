@@ -81,11 +81,14 @@ type match struct {
 // goes to a pane, and cannot go to a message in it.
 type result struct {
 	Pane  pane
-	Kind  string  // What found the pane.
-	Named bool    // The name of the pane holds the words.
-	Found []match // The best first.
-	rank  int
-	at    string
+	Kind  string // What found the pane.
+	Named bool   // The name of the pane holds the words.
+	// Letters are the positions in the title that a query matches with letters
+	// left out, as "tlbr" in "tilebar".
+	Letters []int
+	Found   []match // The best first.
+	rank    int
+	at      string
 }
 
 // Matches is the number of messages or lines that hold the words.
@@ -117,7 +120,8 @@ func search(panes []pane, query string) []result {
 		name := lowerRunes(p.SessionLabel + " " + p.WindowLabel + " " + p.Name + " " + shortHome(p.Cwd))
 		named := containsAll(name, words)
 		found := p.matches(words)
-		if !named && len(found) == 0 {
+		letters := lettersOf(p.title(), words)
+		if !named && len(found) == 0 && letters == nil {
 			continue
 		}
 		r := result{Pane: p, Kind: kindPane, Named: named, Found: found}
@@ -132,11 +136,17 @@ func search(panes []pane, query string) []result {
 		if !strong {
 			r.rank += 3
 		}
+		if letters != nil && !named && (len(found) == 0 || !found[0].Strong) {
+			r.Kind, r.Named, r.Letters, r.rank, r.at = kindPane, true, letters, 0, ""
+		}
 		results = append(results, r)
 	}
 	sort.SliceStable(results, func(i, j int) bool {
 		if results[i].rank != results[j].rank {
 			return results[i].rank < results[j].rank
+		}
+		if (results[i].Letters == nil) != (results[j].Letters == nil) {
+			return results[i].Letters == nil
 		}
 		return results[i].at > results[j].at
 	})
@@ -160,6 +170,36 @@ func (p pane) matches(words []string) []match {
 		}
 	}
 	return append(strong, partial...)
+}
+
+// lettersOf finds the letters of one word in a name, in order. They must start at
+// the start of a word and stay close, so that a word does not match any long name
+// by accident.
+func lettersOf(name string, words []string) []int {
+	if len(words) != 1 || len([]rune(words[0])) < 2 {
+		return nil
+	}
+	word, text := []rune(words[0]), []rune(lowerRunes(name))
+	for start := range text {
+		if text[start] != word[0] || start > 0 && (unicode.IsLetter(text[start-1]) || unicode.IsDigit(text[start-1])) {
+			continue
+		}
+		at, positions := start, []int{}
+		for _, r := range word {
+			for at < len(text) && text[at] != r {
+				at++
+			}
+			if at == len(text) {
+				break
+			}
+			positions = append(positions, at)
+			at++
+		}
+		if len(positions) == len(word) && at-start <= 2*len(word) {
+			return positions
+		}
+	}
+	return nil
 }
 
 // title is the name of the pane. Rex can have none for it.

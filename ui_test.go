@@ -332,3 +332,14 @@ func TestAScreenReadOfAnotherPaneReadsTheSelectedOneNext(t *testing.T) {
 		t.Fatalf("read %s", msg.block)
 	}
 }
+
+func TestALetterLeftOutMarksTheOthers(t *testing.T) {
+	m := open(t, 120, 30, pane{Block: "a", Name: "tilebar", SessionLabel: "s"})
+	typeText(m, "tlbr")
+	out := m.View()
+	for _, want := range []string{styleHit + "mt", styleHit + "ml", styleHit + "mb", styleHit + "mr"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in %q", want, out)
+		}
+	}
+}

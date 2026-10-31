@@ -297,8 +297,12 @@ func paint(spans []span, background string, width int) string {
 
 // marked returns text in a style, with the words of a query marked.
 func marked(text string, words []string, style string) []span {
+	return markedRunes(text, marks(text, words), style)
+}
+
+// markedRunes returns text in a style, with the runes that are on marked.
+func markedRunes(text string, on []bool, style string) []span {
 	runes := []rune(text)
-	on := marks(text, words)
 	var spans []span
 	for i := 0; i < len(runes); {
 		j := i
@@ -457,7 +461,18 @@ func (m *model) rowLine(r result, width int, selected bool) string {
 	}
 	room := width - 2
 	title := cut(clean(r.Pane.title()), room*6/10)
-	spans := append([]span{{bar, styleAccent}, {" ", ""}}, marked(title, words, styleBold)...)
+	spans := []span{{bar, styleAccent}, {" ", ""}}
+	if r.Letters != nil {
+		on := make([]bool, len([]rune(title)))
+		for _, at := range r.Letters {
+			if at < len(on) {
+				on[at] = true
+			}
+		}
+		spans = append(spans, markedRunes(title, on, styleBold)...)
+	} else {
+		spans = append(spans, marked(title, words, styleBold)...)
+	}
 	room -= ansi.StringWidth(title)
 
 	accessory := ""
