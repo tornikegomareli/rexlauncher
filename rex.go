@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -71,10 +72,53 @@ func loadText(panes []pane, conversations map[string]conversation, index string)
 	return loaded
 }
 
-// captureScreen reads what a pane shows now.
+// captureScreen reads what a pane shows now, with its colors.
 func captureScreen(p pane) (string, error) {
-	text, err := runRex("capture", "-s", p.Session, "-b", p.Block, "--trim")
-	return string(text), err
+	text, err := runRex("capture", "-s", p.Session, "-b", p.Block, "--trim", "--format=vt")
+	return screenText(string(text)), err
+}
+
+var (
+	controlSequence = regexp.MustCompile(`\x1b\[([0-9;:?]*)([ -/]*[@-~])`)
+	otherEscape     = regexp.MustCompile(`\x1b\][^\x07\x1b]*(\x07|\x1b\\\\)?|\x1b[^\[]`)
+)
+
+// screenText keeps the colors of a screen, and turns cursor moves to the right
+// into spaces. Nothing else passes, so that a pane cannot move the picker's cursor.
+// Each line ends with a reset and starts with the colors that are still on, so that
+// each line can be cut alone.
+func screenText(vt string) string {
+	vt = otherEscape.ReplaceAllString(vt, "")
+	active := ""
+	lines := strings.Split(strings.TrimRight(vt, "\n"), "\n")
+	for i, line := range lines {
+		var out strings.Builder
+		out.WriteString(active)
+		end := 0
+		for _, at := range controlSequence.FindAllStringSubmatchIndex(line, -1) {
+			out.WriteString(clean(line[end:at[0]]))
+			end = at[1]
+			parameters, kind := line[at[2]:at[3]], line[at[4]:at[5]]
+			switch kind {
+			case "m":
+				if parameters == "" || parameters == "0" {
+					active = ""
+				} else {
+					active += line[at[0]:at[1]]
+				}
+				out.WriteString(line[at[0]:at[1]])
+			case "C":
+				count, err := strconv.Atoi(parameters)
+				if err != nil {
+					count = 1
+				}
+				out.WriteString(strings.Repeat(" ", count))
+			}
+		}
+		out.WriteString(clean(line[end:]) + "\x1b[0m")
+		lines[i] = out.String()
+	}
+	return strings.Join(lines, "\n") + "\n"
 }
 
 // runRex calls rex. It never starts a server: the picker runs inside one.

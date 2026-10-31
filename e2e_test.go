@@ -256,3 +256,25 @@ func TestRefusesAServerThatDoesNotHoldItsOwnSession(t *testing.T) {
 		t.Fatal("no error outside of Rex")
 	}
 }
+
+func TestCaptureScreenKeepsColors(t *testing.T) {
+	server(t)
+	p := newSession(t, "colors")
+	if _, err := runRex("send", "-s", "colors", `printf '\033[31mmongoose-%d\033[0m\n' 42`+"\n"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		text, err := captureScreen(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(text, "31m") && strings.Contains(text, "mongoose-42") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no color in %q", text)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}

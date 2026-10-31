@@ -343,3 +343,60 @@ func TestALetterLeftOutMarksTheOthers(t *testing.T) {
 		}
 	}
 }
+
+func TestPreviewKeepsTheColorsOfTheScreenAndNothingElse(t *testing.T) {
+	m := open(t, 120, 30, pane{Block: "a", Name: "x"})
+	send(m, captureMsg{block: "a", text: screenText("\x1b[31mred\x1b[0m \x1b[3Cgap\x1b[2J\x1b]0;title\x07\n")})
+	out := m.View()
+	if !strings.Contains(out, "\x1b[31mred") {
+		t.Fatalf("no color in %q", out)
+	}
+	if !strings.Contains(ansi.Strip(out), "red    gap") {
+		t.Fatalf("no gap in %q", ansi.Strip(out))
+	}
+	for _, unwanted := range []string{"\x1b[2J", "title", "\x07"} {
+		if strings.Contains(out, unwanted) {
+			t.Fatalf("%q in %q", unwanted, out)
+		}
+	}
+}
+
+func TestAColorOfTheScreenStaysInsideThePreview(t *testing.T) {
+	long := "\x1b[31m" + strings.Repeat("x", 300) + "\n"
+	m := open(t, 120, 30, pane{Block: "a", Name: "x"})
+	send(m, captureMsg{block: "a", text: screenText(long)})
+	for _, line := range strings.Split(m.View(), "\n") {
+		if strings.Contains(line, "xxx") && !strings.HasSuffix(line, "\x1b[0m") {
+			t.Fatalf("no reset at the end of %q", line)
+		}
+		if got := ansi.StringWidth(line); got > 120 {
+			t.Fatalf("a line of %d", got)
+		}
+	}
+}
+
+func TestScreenText(t *testing.T) {
+	got := screenText("\x1b[31mone\ntwo\x1b[0m\nthree\r\n")
+	want := "\x1b[31mone\x1b[0m\n\x1b[31mtwo\x1b[0m\x1b[0m\nthree\x1b[0m\n"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestThePreviewReadsTheScreenAgainOnTheTimer(t *testing.T) {
+	reads := 0
+	m := &model{
+		loadText: func(p []pane) []pane { return p },
+		capture: func(p pane) (string, error) {
+			reads++
+			return fmt.Sprintf("read %d", reads), nil
+		},
+	}
+	send(m, tea.WindowSizeMsg{Width: 120, Height: 30})
+	send(m, panesMsg{panes: []pane{{Block: "a", Name: "x"}}})
+	before := reads
+	send(m, tickMsg{})
+	if reads != before+1 || !strings.Contains(view(m), fmt.Sprintf("read %d", reads)) {
+		t.Fatalf("%d reads, then %d: %s", before, reads, view(m))
+	}
+}

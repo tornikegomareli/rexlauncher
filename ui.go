@@ -546,7 +546,8 @@ func (m *model) detail(label, value string, width int) string {
 func (m *model) screenLines(r result, width, height int) []string {
 	var lines []string
 	for _, line := range lastLines(m.screens[r.Pane.Block], height) {
-		lines = append(lines, paint([]span{{cut(clean(line), width), ""}}, "49", width))
+		shown := ansi.Truncate(line, width, "")
+		lines = append(lines, shown+strings.Repeat(" ", max(width-ansi.StringWidth(shown), 0))+"\x1b[0m")
 	}
 	return lines
 }
