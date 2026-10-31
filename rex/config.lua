@@ -3,8 +3,8 @@
 local plugin = rexd.plugin
 
 rex.action{
-  name = "jump_anywhere",
-  title = "Jump Anywhere",
+  name = "rexlauncher",
+  title = "Rex Launcher",
   run = function(ctx)
     return rex.session.new_layer{
       bounds = { 0.06, 0.06, 0.88, 0.88 },
@@ -18,4 +18,4 @@ rex.action{
 }
 
 -- Keys in the user's init.lua win over this one.
-rex.bind("ctrl+alt+shift+j", "jump_anywhere")
+rex.bind("ctrl+alt+shift+l", "rexlauncher")

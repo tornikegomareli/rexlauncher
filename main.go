@@ -87,7 +87,7 @@ func goTo(session, window, block, client string) error {
 		if _, err := runRex(append([]string{"-C", client}, selectArgs...)...); err == nil {
 			return nil
 		}
-		// The client that opened the picker can be gone: "rex do jump_anywhere" is
+		// The client that opened the picker can be gone: "rex do rexlauncher" is
 		// one. Rex then uses the app, if one is connected.
 	}
 	_, err = runRex(selectArgs...)

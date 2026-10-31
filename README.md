@@ -1,4 +1,4 @@
-# Jump anywhere
+# Rex Launcher
 
 A [rexd](https://github.com/tornikegomareli/rexd) plugin for [Rex](https://www.superlogical.com/rex). It searches every pane on your server, and the words said in the Claude Code conversations inside them, then goes to the pane you choose.
 
@@ -24,7 +24,7 @@ Type part of a name, or a word you remember from a conversation:
 ## Install
 
 ```sh
-rexd install tornikegomareli/rex-jump
+rexd install tornikegomareli/rexlauncher
 ```
 
 It needs:
@@ -34,17 +34,17 @@ It needs:
 
 ## Keys
 
-The plugin binds `ctrl+alt+shift+j`. To use another key, bind `jump_anywhere` in your `init.lua`:
+The plugin binds `ctrl+alt+shift+l`. To use another key, bind `rexlauncher` in your `init.lua`:
 
 ```lua
-rex.bind("cmd+shift+k", "jump_anywhere")
+rex.bind("cmd+shift+k", "rexlauncher")
 ```
 
 Rex warns about a key bound to an action it does not have, so if you may remove the plugin, fall back to another action:
 
 ```lua
-local has_jump = rexd and rexd.plugins["tornikegomareli.jump"]
-rex.bind("cmd+shift+k", has_jump and "jump_anywhere" or "session.switch")
+local has_launcher = rexd and rexd.plugins["tornikegomareli.rexlauncher"]
+rex.bind("cmd+shift+k", has_launcher and "rexlauncher" or "session.switch")
 ```
 
 | Action | Key |
@@ -84,12 +84,12 @@ Limits:
 
 ## Your data
 
-Nothing leaves your machine. A transcript is mostly tool output, so the plugin keeps an index with only the text above, in your cache folder (`~/Library/Caches/rex-jump` on macOS). Only you can read these files. Each one is deleted 30 days after its conversation was last searched. The text of your other panes stays in memory while the picker is open.
+Nothing leaves your machine. A transcript is mostly tool output, so the plugin keeps an index with only the text above, in your cache folder (`~/Library/Caches/rexlauncher` on macOS). Only you can read these files. Each one is deleted 30 days after its conversation was last searched. The text of your other panes stays in memory while the picker is open.
 
 ## Develop
 
 ```sh
-rexd install ./rex-jump --link
+rexd install ./rexlauncher --link
 make test    # unit tests
 make e2e     # against a Rex server of its own
 ```
