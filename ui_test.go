@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -471,5 +472,17 @@ func TestTheWheelMovesTheListOrThePreview(t *testing.T) {
 	wheel(m, 5, 10, tea.MouseButtonWheelUp)
 	if m.selected != 0 || m.previewTop != 0 {
 		t.Fatalf("selected %d, preview at %d", m.selected, m.previewTop)
+	}
+}
+
+func TestAnEmptyQueryShowsWhatEachConversationSaidLast(t *testing.T) {
+	p := talking(t, "a", "x", said("user", "first"), said("assistant", "the last message"))
+	p.Active, p.Cwd = time.Now().Add(-5*time.Minute), "/code/x"
+	m := open(t, 120, 30, p)
+	out := view(m)
+	for _, want := range []string{"Recent conversations", "the last message", "5m", "Active   5m ago", "Folder   /code/x"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in\n%s", want, out)
+		}
 	}
 }

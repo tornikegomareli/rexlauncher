@@ -1,10 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/charmbracelet/x/ansi"
@@ -16,6 +18,7 @@ const (
 	kindScreen = "screen"
 
 	maxInPreview = 20
+	maxRecent    = 6
 
 	// Characters of text around a match. A row keeps few before it, because it is
 	// cut at its end, and the match must stay in view.
@@ -99,6 +102,8 @@ func (r result) Matches() int {
 // Heading is the name of the section that the row is in.
 func (r result) Heading() string {
 	switch r.rank {
+	case -1:
+		return "Recent conversations"
 	case 0:
 		return "Panes"
 	case 1:
@@ -112,9 +117,13 @@ func (r result) Heading() string {
 // search finds panes by name first, then by the words said in their
 // conversations, the newest first, then by the text of their screens. All the
 // words of the query must be in the same message or line. A pane where they only
-// occur inside other words comes after all the others.
+// occur inside other words comes after all the others. An empty query lists the
+// conversations that changed last, and then the other panes.
 func search(panes []pane, query string) []result {
 	words := strings.Fields(lowerRunes(query))
+	if len(words) == 0 {
+		return listAll(panes)
+	}
 	var results []result
 	for _, p := range panes {
 		name := lowerRunes(p.SessionLabel + " " + p.WindowLabel + " " + p.Name + " " + shortHome(p.Cwd))
@@ -151,6 +160,41 @@ func search(panes []pane, query string) []result {
 		return results[i].at > results[j].at
 	})
 	return results
+}
+
+func listAll(panes []pane) []result {
+	results := make([]result, len(panes))
+	for i, p := range panes {
+		results[i] = result{Pane: p, Kind: kindPane, Named: true}
+		if !p.Active.IsZero() && !p.Here {
+			results[i].rank, results[i].at = -1, p.Active.UTC().Format(time.RFC3339Nano)
+		}
+	}
+	sort.SliceStable(results, func(i, j int) bool {
+		if results[i].rank != results[j].rank {
+			return results[i].rank < results[j].rank
+		}
+		return results[i].at > results[j].at
+	})
+	for i := maxRecent; i < len(results); i++ {
+		results[i].rank = max(results[i].rank, 0)
+	}
+	sort.SliceStable(results, func(i, j int) bool { return results[i].rank < results[j].rank })
+	return results
+}
+
+// age is a short form of the time since a moment.
+func age(moment, now time.Time) string {
+	since := now.Sub(moment)
+	switch {
+	case since < time.Minute:
+		return "now"
+	case since < time.Hour:
+		return fmt.Sprintf("%dm", int(since.Minutes()))
+	case since < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(since.Hours()))
+	}
+	return fmt.Sprintf("%dd", int(since.Hours()/24))
 }
 
 // matches returns the best first: those that are strong, and then the newest.

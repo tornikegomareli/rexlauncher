@@ -534,18 +534,31 @@ func (m *model) rowLine(r result, width int, selected bool) string {
 	accessory := ""
 	if r.Matches() > 1 {
 		accessory = fmt.Sprint(r.Matches())
+	} else if len(words) == 0 && !r.Pane.Active.IsZero() {
+		accessory = age(r.Pane.Active, time.Now())
+	}
+	if accessory != "" {
 		room -= ansi.StringWidth(accessory) + 1
 	}
 	if room > 3 {
 		spans = append(spans, span{"  ", ""})
 		room -= 2
-		if len(words) > 0 && r.Matches() > 0 {
-			best := r.Found[0]
+		var best *entry
+		text := ""
+		switch {
+		case len(words) > 0 && r.Matches() > 0:
+			best = &r.Found[0].entry
+			text = around(best.Text, words[0], rowBefore, rowLength)
+		case len(words) == 0 && r.Pane.Conversation && len(r.Pane.Text) > 0:
+			best = &r.Pane.Text[0]
+			text = best.Text
+		}
+		if best != nil {
 			if best.Label != "" && ansi.StringWidth(best.Label) < room {
 				spans = append(spans, span{best.Label, dim})
 				room -= ansi.StringWidth(best.Label)
 			}
-			text := cut(around(best.Text, words[0], rowBefore, rowLength), room)
+			text = cut(text, room)
 			spans = append(spans, marked(text, words, dim)...)
 			room -= ansi.StringWidth(text)
 		} else {
@@ -586,6 +599,8 @@ func (m *model) previewLines(width, height int) []string {
 		}
 		if r.Matches() > 0 {
 			lines = append(lines, m.detail("Matches", fmt.Sprint(r.Matches()), width))
+		} else if !r.Pane.Active.IsZero() {
+			lines = append(lines, m.detail("Active", ago(r.Pane.Active), width))
 		}
 	}
 	for len(lines) < height {
@@ -640,4 +655,12 @@ func (m *model) footerLine(width int) string {
 		spans = append(spans, span{strings.Repeat(" ", max(width-used-ansi.StringWidth(position)-1, 0)) + position, styleDim})
 	}
 	return paint(spans, "49", width)
+}
+
+func ago(moment time.Time) string {
+	since := age(moment, time.Now())
+	if since == "now" {
+		return since
+	}
+	return since + " ago"
 }

@@ -199,8 +199,30 @@ func TestFindsAPaneByNameByWhatWasSaidAndByItsScreen(t *testing.T) {
 		t.Errorf("after a new message: %s, want %s", got, want)
 	}
 
-	// The picker's own pane is not a result.
-	panes, _, err := loadPanes(shell.Block, claude)
+	// The picker's own pane is not a result, and the others of its window are here.
+	if _, err := runRex("split", "-s", "agent-session"); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := listPanes(agent.Block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	here := 0
+	for _, p := range listed {
+		if p.Block == agent.Block {
+			t.Errorf("found itself: %+v", p)
+		}
+		if p.Here {
+			here++
+			if p.SessionLabel != "agent-session" {
+				t.Errorf("here in another session: %+v", p)
+			}
+		}
+	}
+	if here != 1 {
+		t.Errorf("%d panes here", here)
+	}
+	panes, _, err = loadPanes(shell.Block, claude)
 	if err != nil {
 		t.Fatal(err)
 	}

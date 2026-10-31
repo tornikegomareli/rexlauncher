@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeLines(t *testing.T, lines ...string) string {
@@ -280,5 +281,44 @@ func TestWordsInThePaneBeatLettersOfItsName(t *testing.T) {
 	both := talking(t, "both", "tilebar", said("user", "the tlbr file"))
 	if got := search([]pane{both}, "tlbr")[0]; got.Kind != kindSaid || got.Letters != nil {
 		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestAnEmptyQueryShowsRecentConversationsFirst(t *testing.T) {
+	now := time.Now()
+	old, recent := pane{Block: "old", Name: "o", Conversation: true, Active: now.Add(-time.Hour)}, pane{Block: "new", Name: "n", Conversation: true, Active: now}
+	here := pane{Block: "here", Name: "h", Conversation: true, Active: now.Add(time.Minute), Here: true}
+	shell := pane{Block: "shell", Name: "s"}
+	results := search([]pane{shell, old, here, recent}, "")
+	var got []string
+	for _, r := range results {
+		got = append(got, r.Heading()+":"+r.Pane.Block)
+	}
+	want := "Recent conversations:new Recent conversations:old Panes:shell Panes:here"
+	if strings.Join(got, " ") != want {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestTheRecentSectionIsLimited(t *testing.T) {
+	var panes []pane
+	for i := range maxRecent + 3 {
+		panes = append(panes, pane{Block: fmt.Sprint(i), Name: "x", Conversation: true, Active: time.Now().Add(time.Duration(i) * time.Minute)})
+	}
+	results := search(panes, "")
+	if results[0].Pane.Block != fmt.Sprint(maxRecent+2) || results[maxRecent-1].Heading() != "Recent conversations" || results[maxRecent].Heading() != "Panes" {
+		t.Fatalf("got %+v", results[maxRecent])
+	}
+}
+
+func TestAge(t *testing.T) {
+	now := time.Now()
+	for _, c := range []struct {
+		ago  time.Duration
+		want string
+	}{{time.Second, "now"}, {5 * time.Minute, "5m"}, {3 * time.Hour, "3h"}, {50 * time.Hour, "2d"}} {
+		if got := age(now.Add(-c.ago), now); got != c.want {
+			t.Errorf("%v: got %q", c.ago, got)
+		}
 	}
 }

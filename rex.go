@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 const maxConcurrent = 8
@@ -25,8 +26,13 @@ type pane struct {
 	Block        string
 	Name         string
 	Cwd          string
+	// Here says if the pane is in the window of the picker. It is behind the picker,
+	// so it is not worth suggesting.
+	Here bool
 	// Conversation says if a Claude Code session runs in the pane.
 	Conversation bool
+	// Active is the last change of the conversation.
+	Active time.Time
 	// Text is what the search reads: the conversation, or the scrollback of any
 	// other pane. The newest comes first.
 	Text []entry
@@ -42,7 +48,7 @@ func loadPanes(self, claude string) ([]pane, map[string]conversation, error) {
 	conversations := findConversations(claude)
 	for i := range panes {
 		if c, ok := conversations[panes[i].Block]; ok {
-			panes[i].Conversation = true
+			panes[i].Conversation, panes[i].Active = true, c.Active
 			if c.Name != "" {
 				panes[i].Name = c.Name
 			}
@@ -233,8 +239,13 @@ func sessionPanes(session, self string) ([]pane, error) {
 	}
 	var panes []pane
 	for _, window := range view.Windows {
+		here := false
+		first := len(panes)
 		for _, layer := range window.Layers {
 			for _, block := range layer.Blocks {
+				if block.ID == self {
+					here = true
+				}
 				if block.ID == self || block.Creator != "com.superlogical.terminal" {
 					continue
 				}
@@ -247,6 +258,9 @@ func sessionPanes(session, self string) ([]pane, error) {
 					Name:         block.Label,
 				})
 			}
+		}
+		for i := first; i < len(panes); i++ {
+			panes[i].Here = here
 		}
 	}
 	return panes, nil
@@ -290,6 +304,7 @@ type conversation struct {
 	ID         string
 	Name       string
 	Transcript string
+	Active     time.Time
 }
 
 var rexBlockVariable = regexp.MustCompile(`\bREX_BLOCK=(block:[0-9a-f-]+)`)
@@ -329,6 +344,9 @@ func findConversations(claudeDir string) map[string]conversation {
 		}
 		blocks[i] = string(match[1])
 		found[i] = conversation{ID: session.SessionID, Name: session.Name, Transcript: transcripts[0]}
+		if info, err := os.Stat(transcripts[0]); err == nil {
+			found[i].Active = info.ModTime()
+		}
 	})
 	conversations := map[string]conversation{}
 	for i, block := range blocks {
