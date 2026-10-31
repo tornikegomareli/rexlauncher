@@ -1,4 +1,4 @@
-// rex-jump is the program behind the Jump Anywhere plugin for Rex. It finds a
+// rexlauncher is the program behind the Rex Launcher plugin for Rex. It finds a
 // pane by name, or by the words said in the conversation inside it, and goes there.
 package main
 
@@ -12,7 +12,7 @@ import (
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, "rex-jump:", err)
+		fmt.Fprintln(os.Stderr, "rexlauncher:", err)
 		waitForEnter()
 		os.Exit(1)
 	}
@@ -37,7 +37,7 @@ func run(args []string) error {
 	case len(args) == 2 && args[0] == "pick":
 		return pick(args[1])
 	}
-	return fmt.Errorf("usage: rex-jump pick [CLIENT]")
+	return fmt.Errorf("usage: rexlauncher pick [CLIENT]")
 }
 
 // pick shows the picker, and goes to the pane that the person chose.

@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const stayAliveVariable = "REX_JUMP_TEST_STAY_ALIVE"
+const stayAliveVariable = "REXLAUNCHER_TEST_STAY_ALIVE"
 
 func TestMain(m *testing.M) {
 	if os.Getenv(stayAliveVariable) != "" {

@@ -11,7 +11,7 @@ rex.action{
       focus = true,
       layout = rex.layout.block{
         flavor = "com.superlogical.terminal.shell",
-        options = { command = { plugin.dir .. "/bin/rex-jump", "pick", ctx.client_id or "" } },
+        options = { command = { plugin.dir .. "/bin/rexlauncher", "pick", ctx.client_id or "" } },
       },
     }
   end,

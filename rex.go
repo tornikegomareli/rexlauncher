@@ -370,6 +370,6 @@ func cacheDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(base, "rex-jump")
+	dir := filepath.Join(base, "rexlauncher")
 	return dir, os.MkdirAll(dir, 0o700)
 }

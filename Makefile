@@ -1,7 +1,7 @@
 .PHONY: build test e2e lint clean
 
 build:
-	go build -o bin/rex-jump .
+	go build -o bin/rexlauncher .
 
 test:
 	go test -race ./...

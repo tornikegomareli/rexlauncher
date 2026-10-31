@@ -9,4 +9,4 @@ rex_api = 7
 config = "rex/config.lua"
 
 [[build]]
-run = ["go", "build", "-o", "bin/rex-jump", "."]
+run = ["go", "build", "-o", "bin/rexlauncher", "."]

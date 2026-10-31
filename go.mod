@@ -1,4 +1,4 @@
-module github.com/tornikegomareli/rex-jump
+module github.com/tornikegomareli/rexlauncher
 
 go 1.24.2
 
