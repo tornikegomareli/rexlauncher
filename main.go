@@ -25,7 +25,13 @@ func main() {
 // when this program exits.
 func waitForEnter() {
 	fmt.Fprintln(os.Stderr, "Press Enter to close.")
-	bufio.NewReader(os.Stdin).ReadString('\n')
+	// Not stdin: fzf does not hand it to the command it becomes.
+	tty, err := os.Open("/dev/tty")
+	if err != nil {
+		return
+	}
+	defer tty.Close()
+	bufio.NewReader(tty).ReadString('\n')
 }
 
 func run(args []string) error {
