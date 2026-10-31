@@ -46,7 +46,7 @@ func run(args []string) error {
 		}
 		return pick(client)
 	case command == "search" && len(rest) == 1:
-		panes, err := loadSnapshot(os.Getenv(snapshotVariable))
+		panes, err := loadSnapshot(os.Getenv(snapshotVariable), needsContent(rest[0]))
 		if err != nil {
 			return err
 		}
@@ -55,7 +55,7 @@ func run(args []string) error {
 		}
 		return nil
 	case command == "preview" && len(rest) == 4:
-		panes, err := loadSnapshot(os.Getenv(snapshotVariable))
+		panes, err := loadSnapshot(os.Getenv(snapshotVariable), needsContent(rest[3]))
 		if err != nil {
 			return err
 		}
@@ -106,11 +106,6 @@ func pick(client string) error {
 	if err != nil {
 		return err
 	}
-	pruneIndex(index)
-	fmt.Println("Reading panes and conversations…")
-	if err := takeSnapshot(snapshot, os.Getenv("REX_BLOCK"), claudeDir(), index); err != nil {
-		return err
-	}
 
 	me := shellQuote(self)
 	cmd := exec.Command(fzf,
@@ -127,7 +122,26 @@ func pick(client string) error {
 	// fzf runs its commands with $SHELL, and a person's shell may be slow to start.
 	cmd.Env = append(os.Environ(), "SHELL=/bin/sh", snapshotVariable+"="+snapshot)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	err = cmd.Run()
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	// The picker opens at once, and a search waits for what it needs.
+	failed := make(chan error, 1)
+	go func() {
+		pruneIndex(index)
+		if err := takeSnapshot(snapshot, os.Getenv("REX_BLOCK"), claudeDir(), index); err != nil {
+			failed <- err
+			cmd.Process.Signal(syscall.SIGTERM)
+		}
+	}()
+
+	err = cmd.Wait()
+	select {
+	case err := <-failed:
+		return err
+	default:
+	}
 	if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 130 {
 		return nil // Escape.
 	}

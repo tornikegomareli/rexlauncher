@@ -156,7 +156,7 @@ func TestFindsAPaneByNameByWhatWasSaidAndByItsScreen(t *testing.T) {
 		if err := takeSnapshot(snapshot, "", claude, cache); err != nil {
 			t.Fatal(err)
 		}
-		panes, err := loadSnapshot(snapshot)
+		panes, err := loadSnapshot(snapshot, true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -206,7 +206,7 @@ func TestFindsAPaneByNameByWhatWasSaidAndByItsScreen(t *testing.T) {
 	if err := takeSnapshot(snapshot, shell.Block, claude, cache); err != nil {
 		t.Fatal(err)
 	}
-	panes, _ = loadSnapshot(snapshot)
+	panes, _ = loadSnapshot(snapshot, true)
 	if got := blocks("shell-session"); got != "" {
 		t.Errorf("found itself: %s", got)
 	}
@@ -257,5 +257,26 @@ func TestRefusesAServerThatDoesNotHoldItsOwnSession(t *testing.T) {
 	}
 	if err := checkServer(""); err == nil {
 		t.Fatal("no error outside of Rex")
+	}
+}
+
+func TestThePaneListIsReadyBeforeTheirContent(t *testing.T) {
+	server(t)
+	newSession(t, "only")
+	snapshot, cache := t.TempDir(), t.TempDir()
+	if err := takeSnapshot(snapshot, "", t.TempDir(), cache); err != nil {
+		t.Fatal(err)
+	}
+	for _, withContent := range []bool{false, true} {
+		panes, err := loadSnapshot(snapshot, withContent)
+		if err != nil || len(panes) == 0 {
+			t.Fatalf("withContent %v: %v, %+v", withContent, err, panes)
+		}
+		if withContent && panes[0].Screen == "" {
+			t.Errorf("no screen in %+v", panes[0])
+		}
+		if !withContent && panes[0].Screen != "" {
+			t.Errorf("a screen in the first list: %+v", panes[0])
+		}
 	}
 }
