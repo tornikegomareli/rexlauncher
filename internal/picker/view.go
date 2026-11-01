@@ -101,6 +101,9 @@ func (m *model) headerLine(width int) string {
 	if m.answering != nil {
 		return m.answerLine(width)
 	}
+	if m.naming {
+		return paint(m.entrySpans([]span{{" Name this layout", styleDim}, {" › ", styleAccent}}), "49", width)
+	}
 	state := m.count()
 	if !m.textLoaded {
 		state = "Reading conversations…"
@@ -132,14 +135,18 @@ func (m *model) answerLine(width int) string {
 	if m.onMenu() {
 		return paint([]span{{" Press a number to choose, for ", styleDim}, {name, styleBold}}, "49", width)
 	}
-	spans := []span{{" Answer ", styleDim}, {name, styleBold}, {" › ", styleAccent}}
+	return paint(m.entrySpans([]span{{" Answer ", styleDim}, {name, styleBold}, {" › ", styleAccent}}), "49", width)
+}
+
+// entrySpans adds the line being typed, with its cursor, after a label.
+func (m *model) entrySpans(spans []span) []span {
 	before, after := string(m.answerText[:m.answerCursor]), string(m.answerText[m.answerCursor:])
 	spans = append(spans, span{before, ""})
 	if after == "" {
-		return paint(append(spans, span{" ", "7"}), "49", width)
+		return append(spans, span{" ", "7"})
 	}
 	first := []rune(after)
-	return paint(append(spans, span{string(first[:1]), "7"}, span{string(first[1:]), ""}), "49", width)
+	return append(spans, span{string(first[:1]), "7"}, span{string(first[1:]), ""})
 }
 
 // statusLabel names what a program is doing in a word, in the color it deserves.
@@ -167,7 +174,7 @@ func statusLabel(s rex.Status) (string, string) {
 func (m *model) count() string {
 	rows, noun := m.visible(), "pane"
 	for _, r := range rows {
-		if r.Action != nil || r.Skill != nil {
+		if !r.IsPane() {
 			noun = "result"
 		}
 	}
@@ -178,6 +185,8 @@ func (m *model) count() string {
 		noun = "action"
 	case search.SkillsTab:
 		noun = "skill"
+	case search.LayoutsTab:
+		noun = "layout"
 	}
 	if len(rows) == 1 {
 		return "1 " + noun
@@ -211,6 +220,8 @@ func (m *model) listLines(width, height int) []string {
 			text = "No action has these words"
 		case m.filter == search.NeedsTab:
 			text = "Nothing needs you"
+		case m.filter == search.LayoutsTab:
+			text = "No layout has these words"
 		case m.filter == search.SkillsTab:
 			text = m.noSkills()
 		case len(m.panes) == 0 && !m.textLoaded:
@@ -262,6 +273,19 @@ func (m *model) rowLine(r search.Result, width int, selected bool) string {
 		dim, background, bar = "", styleSelected, "▌"
 	}
 	room := width - 2
+	if r.SaveLayout {
+		return paint([]span{{bar, styleAccent}, {" ", ""}, {"Save this layout", styleBold}, {"  under a name", dim}}, background, width)
+	}
+	if r.Layout != nil {
+		name := cut(textutil.Clean(r.Layout.Name), room)
+		spans := append([]span{{bar, styleAccent}, {" ", ""}}, marked(name, words, styleBold)...)
+		count := len(r.Layout.Panes())
+		note := fmt.Sprintf("  %d panes  %s", count, ago(r.Layout.SavedAt))
+		if count == 1 {
+			note = fmt.Sprintf("  1 pane  %s", ago(r.Layout.SavedAt))
+		}
+		return paint(append(spans, span{note, dim}), background, width)
+	}
 	if r.Skill != nil {
 		name := cut(textutil.Clean(r.Skill.Name), room)
 		spans := append([]span{{bar, styleAccent}, {" ", ""}}, marked(name, words, styleBold)...)
@@ -351,7 +375,9 @@ func (m *model) rowLine(r search.Result, width int, selected bool) string {
 func (m *model) previewLines(width, height int) []string {
 	r, ok := m.current()
 	lines := make([]string, 0, height)
-	if ok && r.Skill != nil {
+	if ok && (r.Layout != nil || r.SaveLayout) {
+		lines = append(lines, m.layoutLines(r, width)...)
+	} else if ok && r.Skill != nil {
 		lines = append(lines, m.skillLines(r, width)[m.previewTop:]...)
 	} else if ok && r.Action != nil {
 		lines = append(lines,
@@ -402,6 +428,37 @@ func (m *model) previewLines(width, height int) []string {
 
 func (m *model) detail(label, value string, width int) string {
 	return paint([]span{{fmt.Sprintf("%-9s", label), styleDim}, {cut(value, width-9), ""}}, "49", width)
+}
+
+// layoutLines says what a layout holds, or what saving one does.
+func (m *model) layoutLines(r search.Result, width int) []string {
+	blank := strings.Repeat(" ", width)
+	if r.SaveLayout {
+		lines := []string{paint([]span{{"Save this layout", styleBold}}, "49", width), blank}
+		for _, line := range wrap("Saves the windows, splits and folders of this session, and which conversation runs in each pane.", width) {
+			lines = append(lines, paint([]span{{line, ""}}, "49", width))
+		}
+		if m.savedErr != nil {
+			lines = append(lines, blank)
+			for _, line := range wrap("Could not read: "+textutil.Clean(m.savedErr.Error()), width) {
+				lines = append(lines, paint([]span{{line, styleError}}, "49", width))
+			}
+		}
+		return lines
+	}
+	l := r.Layout
+	lines := []string{paint([]span{{cut(textutil.Clean(l.Name), width), styleBold}}, "49", width), m.detail("Saved", ago(l.SavedAt), width), blank}
+	for _, p := range l.Panes() {
+		title, style := textutil.Clean(p.Title), ""
+		if p.Conversation != "" {
+			title, style = title+"  resumes", styleDone
+		}
+		lines = append(lines, paint([]span{{cut(title, width), style}}, "49", width))
+		if p.Cwd != "" {
+			lines = append(lines, paint([]span{{cut("  "+textutil.Clean(search.ShortHome(p.Cwd)), width), styleDim}}, "49", width))
+		}
+	}
+	return lines
 }
 
 // previewText is the part of a preview that scrolls.
@@ -477,6 +534,9 @@ func (m *model) footerLine(width int) string {
 	if m.notice != "" {
 		return paint([]span{{" " + cut(m.notice, width-2), styleBold}}, "49", width)
 	}
+	if m.naming {
+		return paint([]span{{" ↵", styleBold}, {" Save   ", styleDim}, {"esc", styleBold}, {" Back", styleDim}}, "49", width)
+	}
 	if m.answering != nil {
 		if m.onMenu() {
 			return paint([]span{{" 1-9", styleBold}, {" Choose   ", styleDim}, {"↵", styleBold}, {" Go to pane   ", styleDim}, {"esc", styleBold}, {" Back", styleDim}}, "49", width)
@@ -484,9 +544,13 @@ func (m *model) footerLine(width int) string {
 		return paint([]span{{" ↵", styleBold}, {" Send   ", styleDim}, {"esc", styleBold}, {" Back", styleDim}}, "49", width)
 	}
 	enter := " Go to pane   "
-	canAnswer := false
+	canAnswer, canDelete := false, false
 	if r, ok := m.current(); ok {
 		switch {
+		case r.SaveLayout:
+			enter = " Name it   "
+		case r.Layout != nil:
+			enter, canDelete = " Restore   ", true
 		case r.Skill != nil:
 			enter = " Put in prompt   "
 		case r.Action != nil:
@@ -498,6 +562,9 @@ func (m *model) footerLine(width int) string {
 	spans := []span{{" ↵", styleBold}, {enter, styleDim}}
 	if canAnswer && width >= answerHintWidth {
 		spans = append(spans, span{"^r", styleBold}, span{" Answer   ", styleDim})
+	}
+	if canDelete && width >= answerHintWidth {
+		spans = append(spans, span{"^x", styleBold}, span{" Delete   ", styleDim})
 	}
 	spans = append(spans, span{"tab", styleBold}, span{" Filter   ", styleDim}, span{"esc", styleBold}, span{" Close", styleDim})
 	used := 0

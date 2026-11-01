@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/tornikegomareli/rexlauncher/internal/conversations"
+	"github.com/tornikegomareli/rexlauncher/internal/layouts"
 	"github.com/tornikegomareli/rexlauncher/internal/rex"
 	"github.com/tornikegomareli/rexlauncher/internal/search"
 	"github.com/tornikegomareli/rexlauncher/internal/skills"
@@ -34,6 +35,8 @@ func open(t *testing.T, width, height int, panes ...rex.Pane) *model {
 	t.Helper()
 	m := &model{
 		loadStatuses: func([]rex.Pane) map[string]rex.Status { return nil },
+		loadLayouts:  func() ([]layouts.Layout, error) { return nil, nil },
+		sessionName:  func([]rex.Pane) string { return "work" },
 		loadText:     func(p []rex.Pane) []rex.Pane { return p },
 		capture: func(p rex.Pane) (string, error) {
 			return "screen of " + p.Block + "\n", nil
@@ -64,7 +67,7 @@ func runCmd(m *model, cmd tea.Cmd) {
 		return
 	}
 	switch msg.(type) {
-	case panesMsg, textMsg, captureMsg, statusesMsg, answeredMsg:
+	case panesMsg, textMsg, captureMsg, statusesMsg, answeredMsg, layoutsMsg, layoutDoneMsg:
 		send(m, msg)
 	}
 }
@@ -412,6 +415,8 @@ func TestThePreviewReadsTheScreenAgainOnTheTimer(t *testing.T) {
 	reads := 0
 	m := &model{
 		loadStatuses: func([]rex.Pane) map[string]rex.Status { return nil },
+		loadLayouts:  func() ([]layouts.Layout, error) { return nil, nil },
+		sessionName:  func([]rex.Pane) string { return "work" },
 		loadText:     func(p []rex.Pane) []rex.Pane { return p },
 		capture: func(p rex.Pane) (string, error) {
 			reads++
@@ -1197,5 +1202,136 @@ func TestWhileAnsweringThePreviewShowsTheScreenEvenWithMatches(t *testing.T) {
 	r, _ = m.current()
 	if !m.showsScreen(r) {
 		t.Fatal("no screen while answering")
+	}
+}
+
+func someLayouts() []layouts.Layout {
+	return []layouts.Layout{{Name: "morning", SavedAt: time.Now().Add(-time.Hour), Windows: []layouts.Window{{Root: layouts.Node{
+		Direction: "horizontal", Before: &layouts.Node{Pane: &layouts.Pane{Title: "Fix the login", Cwd: "/code/app", Conversation: "abc"}},
+		After: &layouts.Node{Pane: &layouts.Pane{Title: "zsh", Cwd: "/code/app"}},
+	}}}}}
+}
+
+func withLayouts(m *model) *model {
+	send(m, layoutsMsg{saved: someLayouts()})
+	return m
+}
+
+func TestTheLayoutsTabListsSavedOnesAndTheRowThatSaves(t *testing.T) {
+	m := withLayouts(aShell(t))
+	showTab(m, search.LayoutsTab)
+	rows := m.visible()
+	if len(rows) != 2 || !rows[0].SaveLayout || rows[1].Layout.Name != "morning" {
+		t.Fatalf("got %+v", rows)
+	}
+	send(m, tea.KeyMsg{Type: tea.KeyDown})
+	view := ansi.Strip(m.View())
+	for _, want := range []string{"morning", "2 panes", "Fix the login  resumes", "Restore", "Delete"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("no %q in:\n%s", want, view)
+		}
+	}
+}
+
+func TestAnEmptyQueryShowsLayoutsOnlyInTheirTab(t *testing.T) {
+	m := withLayouts(aShell(t))
+	for _, r := range m.visible() {
+		if !r.IsPane() {
+			t.Fatalf("got %+v", r)
+		}
+	}
+	typeText(m, "morning")
+	found := false
+	for _, r := range m.visible() {
+		found = found || r.Layout != nil
+	}
+	if !found {
+		t.Fatal("no layout in the All tab")
+	}
+}
+
+func TestSavingAsksForANameAndSavesThePanes(t *testing.T) {
+	m := withLayouts(aShell(t))
+	var name string
+	var panes int
+	m.saveLayout = func(n string, p []rex.Pane) error { name, panes = n, len(p); return nil }
+	showTab(m, search.LayoutsTab)
+	send(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if !m.naming {
+		t.Fatal("not naming")
+	}
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "Name this layout") || !strings.Contains(view, "work") {
+		t.Fatalf("no prompt in:\n%s", view)
+	}
+	for range 4 {
+		send(m, tea.KeyMsg{Type: tea.KeyBackspace})
+	}
+	send(m, tea.KeyMsg{Type: tea.KeyEnter}) // An empty name saves nothing.
+	if name != "" || !m.naming {
+		t.Fatalf("saved %q", name)
+	}
+	send(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("evening")})
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	runCmd(m, cmd)
+	if name != "evening" || panes != 1 || m.naming {
+		t.Fatalf("saved %q with %d panes", name, panes)
+	}
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "Saved evening") {
+		t.Fatalf("no notice in:\n%s", view)
+	}
+}
+
+func TestSavingANameThatExistsSaysItReplacedIt(t *testing.T) {
+	m := withLayouts(aShell(t))
+	m.saveLayout = func(string, []rex.Pane) error { return nil }
+	showTab(m, search.LayoutsTab)
+	send(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m.answerText, m.answerCursor = []rune("morning"), 7
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	runCmd(m, cmd)
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "Replaced morning") {
+		t.Fatalf("no notice in:\n%s", view)
+	}
+}
+
+func TestEnterOnALayoutChoosesIt(t *testing.T) {
+	m := withLayouts(aShell(t))
+	showTab(m, search.LayoutsTab)
+	send(m, tea.KeyMsg{Type: tea.KeyDown})
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil || m.chosenLayout == nil || m.chosenLayout.Name != "morning" || m.chosen != nil {
+		t.Fatalf("layout %+v, pane %+v", m.chosenLayout, m.chosen)
+	}
+}
+
+func TestDeletingALayoutNeedsTwoPresses(t *testing.T) {
+	m := withLayouts(aShell(t))
+	var gone []string
+	m.deleteLayout = func(n string) error { gone = append(gone, n); return nil }
+	showTab(m, search.LayoutsTab)
+	send(m, tea.KeyMsg{Type: tea.KeyDown})
+	send(m, tea.KeyMsg{Type: tea.KeyCtrlX})
+	if len(gone) != 0 || !strings.Contains(ansi.Strip(m.View()), "Press ctrl+x again") {
+		t.Fatalf("gone %v:\n%s", gone, ansi.Strip(m.View()))
+	}
+	send(m, tea.KeyMsg{Type: tea.KeyUp}) // Any other key cancels it.
+	send(m, tea.KeyMsg{Type: tea.KeyDown})
+	send(m, tea.KeyMsg{Type: tea.KeyCtrlX})
+	if len(gone) != 0 {
+		t.Fatalf("gone %v", gone)
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlX})
+	runCmd(m, cmd)
+	if len(gone) != 1 || gone[0] != "morning" {
+		t.Fatalf("gone %v", gone)
+	}
+}
+
+func TestLayoutsThatCannotBeReadAreReported(t *testing.T) {
+	m := aShell(t)
+	send(m, layoutsMsg{err: errString("bad.json: broken")})
+	showTab(m, search.LayoutsTab)
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "bad.json") {
+		t.Fatalf("no error in:\n%s", view)
 	}
 }

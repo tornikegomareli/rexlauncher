@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tornikegomareli/rexlauncher/internal/conversations"
+	"github.com/tornikegomareli/rexlauncher/internal/layouts"
 	"github.com/tornikegomareli/rexlauncher/internal/rex"
 	"github.com/tornikegomareli/rexlauncher/internal/search"
 )
@@ -719,5 +721,100 @@ func TestAnAnswerIsRefusedOnceTheAgentMovedOn(t *testing.T) {
 	out, err := rex.Run("capture", "-s", p.Session, "-b", p.Block, "--trim")
 	if err != nil || strings.Contains(string(out), "1") {
 		t.Fatalf("%v: pane holds %q", err, out)
+	}
+}
+
+// A real session with a split is saved, closed and built again. A pane with a conversation
+// starts a program named claude, through the shell, with --resume.
+func TestALayoutComesBackWithItsSplitsFoldersAndConversation(t *testing.T) {
+	bin := t.TempDir()
+	marks := filepath.Join(t.TempDir(), "resumed")
+	script := "#!/bin/sh\necho \"$*\" > \"" + marks + "\"\npwd >> \"" + marks + "\"\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A shell of its own: a login profile on this machine could put another claude first.
+	shell := filepath.Join(bin, "shell")
+	if err := os.WriteFile(shell, []byte("#!/bin/sh\nPATH=\""+bin+":$PATH\" exec /bin/sh -c \"$2\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	server(t)
+	folder, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := rex.Run("new", "work", "-c", folder); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if out, err := rex.Run("split", "-s", "work", "--split=below", "-c", folder); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	time.Sleep(500 * time.Millisecond)
+	panes, err := rex.ListPanes("")
+	if err != nil || len(panes) != 2 {
+		t.Fatalf("%v: %+v", err, panes)
+	}
+	const id = "a3af7ab8-1cc4-5178-92d4-0f28dc79e876"
+	panes[0].Conversation = &conversations.Conversation{ID: id}
+	saved, err := layouts.Capture("work", panes[0].Session, panes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := layouts.Save(dir, saved); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := rex.Run("kill", "work"); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	list, err := layouts.List(dir)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("%v: %+v", err, list)
+	}
+
+	session, err := layouts.Restore(list[0], shell, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var view struct {
+		Windows []struct {
+			Layers []struct {
+				Layout struct {
+					Split *struct {
+						Direction string `json:"direction"`
+					} `json:"split"`
+				} `json:"layout"`
+				Blocks []struct {
+					ID string `json:"block_id"`
+				} `json:"blocks"`
+			} `json:"layers"`
+		} `json:"windows"`
+	}
+	if err := rex.Call("session.view", map[string]string{"session_id": session}, &view); err != nil {
+		t.Fatal(err)
+	}
+	layer := view.Windows[0].Layers[0]
+	if layer.Layout.Split == nil || len(layer.Blocks) != 2 {
+		t.Fatalf("got %+v", view)
+	}
+	if original := saved.Windows[0].Root.Direction; layer.Layout.Split.Direction != original {
+		t.Fatalf("direction %q, was %q", layer.Layout.Split.Direction, original)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		data, err := os.ReadFile(marks)
+		if err == nil && strings.Contains(string(data), "--resume "+id) && strings.Contains(string(data), folder) {
+			break
+		}
+		if time.Now().After(deadline) {
+			screen, _ := rex.Run("capture", "-s", session, "-b", layer.Blocks[0].ID, "--trim")
+			t.Fatalf("%v: %q, and the pane shows:\n%s", err, data, screen)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	// A second restore goes to the session, and does not start everything twice.
+	again, err := layouts.Restore(list[0], shell, nil)
+	if err != nil || again != session {
+		t.Fatalf("%v: %q, was %q", err, again, session)
 	}
 }

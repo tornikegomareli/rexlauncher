@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/tornikegomareli/rexlauncher/internal/conversations"
+	"github.com/tornikegomareli/rexlauncher/internal/layouts"
 	"github.com/tornikegomareli/rexlauncher/internal/picker"
 	"github.com/tornikegomareli/rexlauncher/internal/rex"
 	"github.com/tornikegomareli/rexlauncher/internal/search"
@@ -57,6 +58,10 @@ func pick(client, block string) error {
 	if err != nil {
 		return err
 	}
+	saved, err := layouts.Dir()
+	if err != nil {
+		return err
+	}
 	choice, err := picker.Run(picker.Sources{
 		Panes: func() ([]rex.Pane, error) {
 			return search.LoadPanes(os.Getenv("REX_BLOCK"), block, conversations.ClaudeDir())
@@ -72,11 +77,30 @@ func pick(client, block string) error {
 		Answer: func(p rex.Pane, a rex.Answer) error {
 			return rex.Deliver(p.Session, p.Block, a)
 		},
+		Layouts: func() ([]layouts.Layout, error) { return layouts.List(saved) },
+		SaveLayout: func(name string, panes []rex.Pane) error {
+			l, err := layouts.Capture(name, session, panes)
+			if err != nil {
+				return err
+			}
+			return layouts.Save(saved, l)
+		},
+		DeleteLayout: func(name string) error { return layouts.Delete(saved, name) },
+		SessionName: func(panes []rex.Pane) string {
+			for _, p := range panes {
+				if p.Session == session {
+					return p.SessionLabel
+				}
+			}
+			return ""
+		},
 	})
 	if err != nil {
 		return err
 	}
 	switch {
+	case choice.Layout != nil:
+		return restore(*choice.Layout, client)
 	case choice.Skill != nil:
 		return rex.Insert(session, block, choice.Skill.Name+" ") // The space ends the name, and arguments can follow.
 	case choice.Action != nil:
@@ -98,4 +122,21 @@ func loadSkills(session, block string) (skills.Installed, error) {
 		return skills.Installed{}, err
 	}
 	return skills.Load(skills.Program{Argv0: program.Argv0, Path: program.Path, Cwd: program.Cwd}, conversations.ClaudeDir())
+}
+
+// restore builds a session from a layout and shows it.
+func restore(l layouts.Layout, client string) error {
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/zsh"
+	}
+	live := map[string]bool{}
+	for _, c := range conversations.Find(conversations.ClaudeDir()) {
+		live[c.ID] = true
+	}
+	id, err := layouts.Restore(l, shell, live)
+	if err != nil {
+		return err
+	}
+	return rex.ShowSession(id, client)
 }

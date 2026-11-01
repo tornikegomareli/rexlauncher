@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/tornikegomareli/rexlauncher/internal/layouts"
 	"github.com/tornikegomareli/rexlauncher/internal/rex"
 	"github.com/tornikegomareli/rexlauncher/internal/skills"
 	"github.com/tornikegomareli/rexlauncher/internal/textutil"
@@ -32,6 +33,7 @@ const (
 	reasonRecent                 // An empty query: its conversation changed last.
 	reasonName                   // Its name holds the words, or an empty query.
 	ReasonSkill                  // A skill, and not a pane.
+	ReasonLayout                 // A saved layout, or the row that saves one.
 	ReasonAction                 // An action, and not a pane.
 	reasonSaid                   // Its conversation holds the words.
 	reasonScreen                 // Its screen holds the words.
@@ -42,8 +44,11 @@ const (
 type Result struct {
 	Skill  *skills.Skill
 	Action *rex.Action
-	Pane   rex.Pane
-	Reason Reason
+	Layout *layouts.Layout
+	// SaveLayout is the row that saves the session's layout.
+	SaveLayout bool
+	Pane       rex.Pane
+	Reason     Reason
 	// Partial says the words only occur inside other words.
 	Partial bool
 	Named   bool // The name of the pane holds the words.
@@ -56,6 +61,12 @@ type Result struct {
 
 // key tells this row from the others, across searches.
 func (r Result) Key() string {
+	if r.SaveLayout {
+		return "layout-to-save"
+	}
+	if r.Layout != nil {
+		return "layout:" + r.Layout.Name
+	}
 	if r.Skill != nil {
 		return r.Skill.Name
 	}
@@ -63,6 +74,11 @@ func (r Result) Key() string {
 		return r.Action.Name
 	}
 	return r.Pane.Block
+}
+
+// IsPane says if the row is a pane, and not a skill, an action or a layout.
+func (r Result) IsPane() bool {
+	return r.Skill == nil && r.Action == nil && r.Layout == nil && !r.SaveLayout
 }
 
 // Matches is the number of messages or lines that hold the words.
@@ -88,6 +104,8 @@ func (r Result) Heading() string {
 		return "Panes"
 	case ReasonSkill:
 		return "Skills"
+	case ReasonLayout:
+		return "Layouts"
 	case ReasonAction:
 		return "Actions"
 	case reasonSaid:
@@ -131,6 +149,7 @@ var Filters = []Filter{
 		return r.Pane.Conversation == nil && (empty || r.Matches() > 0)
 	}},
 	{"Skills", func(r Result, _ bool) bool { return r.Skill != nil }},
+	{"Layouts", func(r Result, _ bool) bool { return r.Layout != nil || r.SaveLayout }},
 	{"Actions", func(r Result, _ bool) bool { return r.Action != nil }},
 }
 
@@ -138,7 +157,8 @@ const (
 	AllTab     = 0
 	NeedsTab   = 1
 	SkillsTab  = 5
-	ActionsTab = 6
+	LayoutsTab = 6
+	ActionsTab = 7
 )
 
 // search finds panes by name first, then by the words said in their

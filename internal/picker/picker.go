@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/tornikegomareli/rexlauncher/internal/layouts"
 	"github.com/tornikegomareli/rexlauncher/internal/rex"
 	"github.com/tornikegomareli/rexlauncher/internal/search"
 	"github.com/tornikegomareli/rexlauncher/internal/skills"
@@ -47,6 +48,14 @@ type Sources struct {
 	Statuses func([]rex.Pane) map[string]rex.Status
 	// Answer gives an agent what the person told it.
 	Answer func(rex.Pane, rex.Answer) error
+	// Layouts lists the saved layouts.
+	Layouts func() ([]layouts.Layout, error)
+	// SaveLayout saves the session under a name.
+	SaveLayout func(name string, panes []rex.Pane) error
+	// DeleteLayout removes a saved layout.
+	DeleteLayout func(name string) error
+	// SessionName is what a new layout is called until the person names it.
+	SessionName func([]rex.Pane) string
 }
 
 // Choice is what the person chose: a pane, an action, a skill, or none of them.
@@ -54,16 +63,18 @@ type Choice struct {
 	Pane   *rex.Pane
 	Action *rex.Action
 	Skill  *skills.Skill
+	Layout *layouts.Layout
 }
 
 // Run shows the picker until the person chooses or closes it.
 func Run(sources Sources) (Choice, error) {
 	m := &model{loadPanes: sources.Panes, loadText: sources.Text, capture: sources.Screen, loadActions: sources.Actions, loadSkills: sources.Skills,
-		loadStatuses: sources.Statuses, answer: sources.Answer}
+		loadStatuses: sources.Statuses, answer: sources.Answer, loadLayouts: sources.Layouts,
+		saveLayout: sources.SaveLayout, deleteLayout: sources.DeleteLayout, sessionName: sources.SessionName}
 	if _, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
 		return Choice{}, err
 	}
-	return Choice{Pane: m.chosen, Action: m.chosenAction, Skill: m.chosenSkill}, m.err
+	return Choice{Pane: m.chosen, Action: m.chosenAction, Skill: m.chosenSkill, Layout: m.chosenLayout}, m.err
 }
 
 // model is the state of the picker.
@@ -77,6 +88,7 @@ type model struct {
 	// loadStatuses asks the panes what their programs are doing now.
 	loadStatuses func([]rex.Pane) map[string]rex.Status
 	answer       func(rex.Pane, rex.Answer) error
+	sessionName  func([]rex.Pane) string
 
 	ticks         int
 	readingStatus bool
@@ -86,6 +98,16 @@ type model struct {
 	answerCursor int
 	// notice says what just happened, until the next key.
 	notice string
+
+	loadLayouts  func() ([]layouts.Layout, error)
+	saveLayout   func(string, []rex.Pane) error
+	deleteLayout func(string) error
+	saved        []layouts.Layout
+	savedErr     error
+	// naming says the person is naming a layout, in the same line as an answer.
+	naming bool
+	// deleting is the layout that the next ctrl+x deletes.
+	deleting string
 
 	actions      []rex.Action
 	actionsErr   error
@@ -111,6 +133,7 @@ type model struct {
 	chosen       *rex.Pane
 	chosenAction *rex.Action
 	chosenSkill  *skills.Skill
+	chosenLayout *layouts.Layout
 	err          error
 }
 
@@ -132,6 +155,14 @@ type (
 		pane rex.Pane
 		err  error
 	}
+	layoutsMsg struct {
+		saved []layouts.Layout
+		err   error
+	}
+	layoutDoneMsg struct {
+		notice string
+		err    error
+	}
 	textMsg    struct{ panes []rex.Pane }
 	captureMsg struct {
 		block string
@@ -146,7 +177,7 @@ func tick() tea.Cmd {
 
 func (m *model) Init() tea.Cmd {
 	load, loadActions, loadSkills := m.loadPanes, m.loadActions, m.loadSkills
-	return tea.Batch(tick(), func() tea.Msg {
+	return tea.Batch(tick(), m.readLayouts(), func() tea.Msg {
 		panes, err := load()
 		return panesMsg{panes, err}
 	}, func() tea.Msg {
@@ -193,6 +224,15 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyStatuses(statuses)
 		m.refresh(true)
 		return m, m.captureSelected()
+	case layoutsMsg:
+		m.saved, m.savedErr = msg.saved, msg.err
+		m.refresh(true)
+	case layoutDoneMsg:
+		m.notice = msg.notice
+		if msg.err != nil {
+			m.notice = "Failed: " + textutil.Clean(msg.err.Error())
+		}
+		return m, m.readLayouts()
 	case statusesMsg:
 		m.readingStatus = false
 		m.applyStatuses(msg.statuses)
@@ -267,8 +307,13 @@ var pastedLines = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "\t", "
 
 func (m *model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.notice = ""
+	deleting := m.deleting
+	m.deleting = ""
 	if m.answering != nil {
 		return m.answerKey(msg)
+	}
+	if m.naming {
+		return m.nameKey(msg)
 	}
 	name := keyName(msg)
 	switch name {
@@ -277,6 +322,11 @@ func (m *model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if r, ok := m.current(); ok {
 			switch {
+			case r.SaveLayout:
+				m.startNaming()
+				return m, nil
+			case r.Layout != nil:
+				m.chosenLayout = r.Layout
 			case r.Skill != nil:
 				m.chosenSkill = r.Skill
 			case r.Action != nil:
@@ -289,6 +339,8 @@ func (m *model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "ctrl+r":
 		return m, m.startAnswer()
+	case "ctrl+x":
+		return m, m.deleteSelected(deleting)
 	case "up", "ctrl+p":
 		return m, m.move(m.selected - 1)
 	case "down", "ctrl+n":
@@ -379,7 +431,7 @@ func editText(text *[]rune, cursor *int, name string, msg tea.KeyMsg) bool {
 // startAnswer begins an answer to the selected pane, if it is an agent that can take one.
 func (m *model) startAnswer() tea.Cmd {
 	r, ok := m.current()
-	if !ok || r.Skill != nil || r.Action != nil {
+	if !ok || !r.IsPane() {
 		return nil
 	}
 	p := r.Pane
@@ -394,6 +446,66 @@ func (m *model) startAnswer() tea.Cmd {
 		return m.captureSelected()
 	}
 	return nil
+}
+
+// startNaming begins naming a layout, with the session's name to start from.
+func (m *model) startNaming() {
+	name := []rune(m.sessionName(m.panes))
+	m.naming, m.answerText, m.answerCursor = true, name, len(name)
+}
+
+func (m *model) nameKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	name := keyName(msg)
+	switch name {
+	case "esc", "ctrl+c":
+		m.naming = false
+		return m, nil
+	case "enter":
+		text := strings.TrimSpace(string(m.answerText))
+		if text == "" {
+			return m, nil
+		}
+		m.naming = false
+		save, panes := m.saveLayout, m.panes
+		replacing := false
+		for _, l := range m.saved {
+			replacing = replacing || l.Name == text
+		}
+		return m, func() tea.Msg {
+			notice := "Saved " + text
+			if replacing {
+				notice = "Replaced " + text
+			}
+			return layoutDoneMsg{notice, save(text, panes)}
+		}
+	}
+	editText(&m.answerText, &m.answerCursor, name, msg)
+	return m, nil
+}
+
+// deleteSelected deletes the selected layout on the second press, because it cannot be
+// brought back.
+func (m *model) deleteSelected(asked string) tea.Cmd {
+	r, ok := m.current()
+	if !ok || r.Layout == nil {
+		return nil
+	}
+	name := r.Layout.Name
+	if asked != name {
+		m.deleting = name
+		m.notice = "Press ctrl+x again to delete " + textutil.Clean(name)
+		return nil
+	}
+	remove := m.deleteLayout
+	return func() tea.Msg { return layoutDoneMsg{"Deleted " + name, remove(name)} }
+}
+
+func (m *model) readLayouts() tea.Cmd {
+	load := m.loadLayouts
+	return func() tea.Msg {
+		saved, err := load()
+		return layoutsMsg{saved, err}
+	}
 }
 
 // onMenu says if the agent waits on a menu, which only takes a number. Text and then
@@ -462,7 +574,7 @@ func (m *model) refresh(keepSelection bool) {
 	if r, ok := m.current(); ok && keepSelection {
 		keep = r.Key()
 	}
-	m.rows = search.All(m.panes, m.installed.Skills, m.actions, string(m.query))
+	m.rows = search.All(m.panes, m.installed.Skills, m.saved, m.actions, string(m.query))
 	m.selected, m.offset, m.previewTop = 0, 0, 0
 	for i, r := range m.visible() {
 		if r.Key() == keep {
@@ -475,7 +587,7 @@ func (m *model) refresh(keepSelection bool) {
 func (m *model) visible() []search.Result {
 	empty := len(m.words()) == 0
 	var rows []search.Result
-	actions, installed := 0, 0
+	actions, installed, layouts := 0, 0, 0
 	for _, r := range m.rows {
 		// The All tab shows a few of these, once there is a query. The others show none.
 		if r.Action != nil && m.filter != search.ActionsTab {
@@ -489,6 +601,12 @@ func (m *model) visible() []search.Result {
 				continue
 			}
 			installed++
+		}
+		if (r.Layout != nil || r.SaveLayout) && m.filter != search.LayoutsTab {
+			if m.filter != search.AllTab || empty || layouts == search.MaxLayoutsInAll {
+				continue
+			}
+			layouts++
 		}
 		if search.Filters[m.filter].Keep(r, empty) {
 			rows = append(rows, r)
@@ -522,7 +640,7 @@ func (m *model) words() []string {
 
 // showsScreen says if the preview of a row is the pane's screen.
 func (m *model) showsScreen(r search.Result) bool {
-	if r.Action != nil || r.Skill != nil {
+	if !r.IsPane() {
 		return false
 	}
 	// To answer an agent, the person must see what it asks.

@@ -256,7 +256,16 @@ func GoTo(session, window, block, client string) error {
 		}
 		return err
 	}
-	selectArgs := []string{"do", "session.select", "session_id=" + session, "window_id=" + window}
+	return show(client, "session_id="+session, "window_id="+window)
+}
+
+// ShowSession makes the app show a session.
+func ShowSession(session, client string) error {
+	return show(client, "session_id="+session)
+}
+
+func show(client string, target ...string) error {
+	selectArgs := append([]string{"do", "session.select"}, target...)
 	if client != "" {
 		if _, err := Run(append([]string{"-C", client}, selectArgs...)...); err == nil {
 			return nil
@@ -264,7 +273,7 @@ func GoTo(session, window, block, client string) error {
 		// The client that opened the picker can be gone: "rex do rexlauncher" is
 		// one. Rex then uses the app, if one is connected.
 	}
-	_, err = Run(selectArgs...)
+	_, err := Run(selectArgs...)
 	return err
 }
 

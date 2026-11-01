@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/tornikegomareli/rexlauncher/internal/conversations"
+	"github.com/tornikegomareli/rexlauncher/internal/layouts"
 	"github.com/tornikegomareli/rexlauncher/internal/rex"
 	"github.com/tornikegomareli/rexlauncher/internal/skills"
 	"github.com/tornikegomareli/rexlauncher/internal/textutil"
@@ -335,12 +336,12 @@ func TestSearchSkillsPutsNamesBeforeDescriptions(t *testing.T) {
 func TestAllPutsSkillsAfterPanesAndBeforeActionsAndConversations(t *testing.T) {
 	said := rex.Pane{Block: "said", Conversation: &conversations.Conversation{}, Text: []textutil.Entry{{Text: "review it", Lower: "review it"}}}
 	named := rex.Pane{Block: "named", SessionLabel: "review", Name: "shell"}
-	rows := All([]rex.Pane{said, named}, []skills.Skill{{Name: "/review"}}, []rex.Action{{Name: "a", Title: "Review Action"}}, "review")
+	rows := All([]rex.Pane{said, named}, []skills.Skill{{Name: "/review"}}, []layouts.Layout{{Name: "review setup"}}, []rex.Action{{Name: "a", Title: "Review Action"}}, "review")
 	var order []string
 	for _, r := range rows {
 		order = append(order, r.Heading())
 	}
-	if got := strings.Join(order, " "); got != "Panes Skills Actions Conversations" {
+	if got := strings.Join(order, " "); got != "Panes Skills Layouts Actions Conversations" {
 		t.Fatalf("got %q", got)
 	}
 }
@@ -406,5 +407,24 @@ func TestAStatusMessageIsSearched(t *testing.T) {
 	p := rex.Pane{Block: "b", Name: "agent", Status: rex.Status{State: rex.StateBlocked, Message: "Allow terraform apply?"}}
 	if rows := Search([]rex.Pane{p}, "terraform"); len(rows) != 1 {
 		t.Fatalf("got %+v", rows)
+	}
+}
+
+func TestSearchLayoutsFindsNamesAndWhatTheyHold(t *testing.T) {
+	saved := []layouts.Layout{
+		{Name: "morning", Windows: []layouts.Window{{Root: layouts.Node{Pane: &layouts.Pane{Title: "Fix the login", Cwd: "/code/app"}}}}},
+		{Name: "evening"},
+	}
+	if got := SearchLayouts(saved, "morning"); len(got) != 1 || got[0].Layout.Name != "morning" {
+		t.Fatalf("by name: %+v", got)
+	}
+	if got := SearchLayouts(saved, "login"); len(got) != 1 || got[0].Layout.Name != "morning" {
+		t.Fatalf("by pane: %+v", got)
+	}
+	if got := SearchLayouts(saved, ""); len(got) != 3 || !got[0].SaveLayout {
+		t.Fatalf("empty: %+v", got)
+	}
+	if got := SearchLayouts(saved, "save"); len(got) != 1 || !got[0].SaveLayout {
+		t.Fatalf("save: %+v", got)
 	}
 }
