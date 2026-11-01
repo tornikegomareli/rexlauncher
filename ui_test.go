@@ -625,3 +625,12 @@ func TestScreenTextCarriesABoundedAmountOfColor(t *testing.T) {
 		t.Fatalf("%d bytes from 8000 short lines", len(got))
 	}
 }
+
+func TestALabelIsDrawnOnceBeforeALongWord(t *testing.T) {
+	long := "/a/very/long/path/that/fills/a/whole/line/of/the/preview/and/more"
+	m := open(t, 100, 30, talking(t, "a", "x", said("user", long+" word")))
+	typeText(m, "word")
+	if got := strings.Count(previewText(m), "you:"); got != 1 {
+		t.Fatalf("%d labels in\n%s", got, previewText(m))
+	}
+}

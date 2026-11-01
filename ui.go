@@ -582,7 +582,8 @@ func (m *model) matchLines(r result, width int) []string {
 			var spans []span
 			if j == 0 && found.Label != "" {
 				spans = append(spans, span{found.Label, styleDim})
-				line = strings.TrimPrefix(line, found.Label)
+				// Wrapping can drop the space after the label, when the first word is long.
+				line = strings.TrimPrefix(strings.TrimPrefix(line, strings.TrimSpace(found.Label)), " ")
 			}
 			lines = append(lines, paint(append(spans, marked(line, words, "")...), "49", width))
 		}
