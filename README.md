@@ -3,7 +3,7 @@
 <h3 align="center">Find any Rex pane by what was said in it, run any Rex action, and put any skill in your agent's prompt.</h3>
 
 <p align="center">
-  <img src=".github/assets/hero.gif" width="100%" alt="Rex Launcher open over a dark Rex window. It finds a pane by a word from its conversation and by a word on its screen, splits a pane, then finds a skill and puts /code-review in the Claude Code prompt" />
+  <img src=".github/assets/hero.gif" width="100%" alt="Rex Launcher open over a dark Rex window. Over a Claude Code session, it finds another session by a word from its conversation, splits the pane with split r, then finds a skill and puts /code-review in the prompt" />
 </p>
 
 Rex Launcher is one search box for everything in [Rex](https://www.superlogical.com/rex). Press a key, type a few letters, and press Enter.
@@ -68,7 +68,7 @@ Press the key again to close the picker.
 ## Actions
 
 <p align="center">
-  <img src=".github/assets/actions.png" width="100%" alt="Rex Launcher with the search split d. It lists Split Pane Down, Left, Right and Up as actions" />
+  <img src=".github/assets/actions.png" width="100%" alt="Rex Launcher over a Claude Code session with the search split r. It lists Split Pane Right, Left, Up and Down as actions" />
 </p>
 
 You can run Rex's actions without leaving the search box. It has the actions in Rex's palette and those of your `init.lua`:
