@@ -11,6 +11,7 @@ import (
 	"github.com/tornikegomareli/rexlauncher/internal/conversations"
 	"github.com/tornikegomareli/rexlauncher/internal/rex"
 	"github.com/tornikegomareli/rexlauncher/internal/search"
+	"github.com/tornikegomareli/rexlauncher/internal/skills"
 	"github.com/tornikegomareli/rexlauncher/internal/textutil"
 )
 
@@ -878,3 +879,143 @@ func TestAnActionsErrorIsShownInItsTab(t *testing.T) {
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+var someSkills = skills.Installed{Agent: "Claude Code", Skills: []skills.Skill{
+	{Name: "/grilling", Description: "Ask hard questions about a plan until it holds.", Source: "Personal", Path: "/home/.claude/skills/grilling/SKILL.md", Fields: []skills.Field{{Label: "version", Value: "1.2"}}},
+	{Name: "/tools:review", Description: "Review the current diff for bugs.", Source: "Plugin tools", Path: "/plugins/tools/skills/review/SKILL.md"},
+}}
+
+func withSkills(m *model, installed skills.Installed) *model {
+	send(m, skillsMsg{installed: installed})
+	return m
+}
+
+func aShell(t *testing.T) *model {
+	t.Helper()
+	return open(t, 120, 30, rex.Pane{Block: "b", Session: "s", Name: "shell"})
+}
+
+func skillNames(rows []search.Result) string {
+	var names []string
+	for _, r := range rows {
+		if r.Skill != nil {
+			names = append(names, r.Skill.Name)
+		}
+	}
+	return strings.Join(names, " ")
+}
+
+func TestAnEmptyQueryShowsSkillsOnlyInTheirTab(t *testing.T) {
+	m := withSkills(aShell(t), someSkills)
+	if got := skillNames(m.visible()); got != "" {
+		t.Fatalf("All tab: %q", got)
+	}
+	showTab(m, search.SkillsTab)
+	if got := skillNames(m.visible()); got != "/grilling /tools:review" {
+		t.Fatalf("Skills tab: %q", got)
+	}
+	if view := m.View(); !strings.Contains(view, "2 skills") {
+		t.Fatalf("no count in:\n%s", view)
+	}
+}
+
+func TestOtherTabsHaveNoSkills(t *testing.T) {
+	m := withSkills(aShell(t), someSkills)
+	send(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
+	for tab := range search.Filters {
+		showTab(m, tab)
+		if got := skillNames(m.visible()); (tab == search.AllTab || tab == search.SkillsTab) != (got != "") {
+			t.Errorf("%s: %q", search.Filters[tab].Name, got)
+		}
+	}
+}
+
+func TestTheAllTabLimitsSkills(t *testing.T) {
+	var many []skills.Skill
+	for _, name := range strings.Fields("a b c d e f g") {
+		many = append(many, skills.Skill{Name: "/review-" + name})
+	}
+	m := withSkills(aShell(t), skills.Installed{Agent: "pi", Skills: many})
+	send(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("review")})
+	if got := skillNames(m.visible()); len(strings.Fields(got)) != search.MaxSkillsInAll {
+		t.Fatalf("All tab: %q", got)
+	}
+	showTab(m, search.SkillsTab)
+	if got := skillNames(m.visible()); len(strings.Fields(got)) != len(many) {
+		t.Fatalf("Skills tab: %q", got)
+	}
+}
+
+func TestEnterChoosesTheSkillAndNothingElse(t *testing.T) {
+	m := withActions(withSkills(aShell(t), someSkills), someActions...)
+	send(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("grilling")})
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil || m.chosen != nil || m.chosenAction != nil || m.chosenSkill == nil || m.chosenSkill.Name != "/grilling" {
+		t.Fatalf("pane %+v, action %+v, skill %+v", m.chosen, m.chosenAction, m.chosenSkill)
+	}
+}
+
+func TestTheSkillPreviewShowsItsDescriptionAndDetails(t *testing.T) {
+	asked := 0
+	m := withSkills(aShell(t), someSkills)
+	m.capture = func(rex.Pane) (string, error) { asked++; return "", nil }
+	showTab(m, search.SkillsTab)
+	view := ansi.Strip(m.View())
+	for _, want := range []string{"Ask hard questions about a plan", "Agent", "Claude Code", "Source", "Personal", "/home/.claude/skills/grilling/SKILL.md", "version", "1.2", "Put in prompt"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("no %q in:\n%s", want, view)
+		}
+	}
+	if asked != 0 {
+		t.Errorf("read a screen %d times for a skill", asked)
+	}
+}
+
+func TestALongSkillPreviewWrapsAndScrolls(t *testing.T) {
+	long := strings.Repeat("words that wrap ", 80) + "theend"
+	m := withSkills(open(t, 100, 14, rex.Pane{Block: "b", Session: "s", Name: "shell"}), skills.Installed{Agent: "pi", Skills: []skills.Skill{{Name: "/long", Description: long}}})
+	showTab(m, search.SkillsTab)
+	if strings.Contains(ansi.Strip(m.View()), "theend") {
+		t.Fatal("the end of the text fits, so this tests nothing")
+	}
+	for range 40 {
+		send(m, tea.KeyMsg{Type: tea.KeyShiftDown})
+	}
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "theend") {
+		t.Fatalf("no end of text in:\n%s", view)
+	}
+}
+
+func TestTheSkillsTabSaysWhyItIsEmpty(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		prep func(*model)
+		want string
+	}{
+		{"reading", func(*model) {}, "Reading skills"},
+		{"no agent", func(m *model) { send(m, skillsMsg{}) }, "No agent runs in this pane"},
+		{"none installed", func(m *model) { send(m, skillsMsg{installed: skills.Installed{Agent: "Codex"}}) }, "Codex has no skills"},
+		{"error", func(m *model) { send(m, skillsMsg{err: errString("codex did not list its skills")}) }, "codex did not list its skills"},
+	} {
+		m := aShell(t)
+		c.prep(m)
+		showTab(m, search.SkillsTab)
+		if view := ansi.Strip(m.View()); !strings.Contains(view, c.want) {
+			t.Errorf("%s: no %q in:\n%s", c.name, c.want, view)
+		}
+	}
+	m := withSkills(aShell(t), someSkills)
+	showTab(m, search.SkillsTab)
+	send(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("zzzz")})
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "No skill has these words") {
+		t.Errorf("no match:\n%s", view)
+	}
+}
+
+func TestSkillTextCannotMoveThePickersCursor(t *testing.T) {
+	m := withSkills(aShell(t), skills.Installed{Agent: "pi", Skills: []skills.Skill{{Name: "/evil", Description: "bad\x1b[2Jtext", Path: "/x", Source: "Personal", Fields: []skills.Field{{Label: "k\x1b[H", Value: "v\x1b[H"}}}}})
+	showTab(m, search.SkillsTab)
+	if view := m.View(); strings.Contains(view, "\x1b[2J") || strings.Contains(view, "\x1b[H") {
+		t.Fatalf("escape in:\n%q", view)
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"github.com/tornikegomareli/rexlauncher/internal/picker"
 	"github.com/tornikegomareli/rexlauncher/internal/rex"
 	"github.com/tornikegomareli/rexlauncher/internal/search"
+	"github.com/tornikegomareli/rexlauncher/internal/skills"
 )
 
 func main() {
@@ -45,8 +46,8 @@ func run(args []string) error {
 	return fmt.Errorf("usage: rexlauncher pick [CLIENT [BLOCK]]")
 }
 
-// pick shows the picker, and then goes to the pane or runs the action that the person
-// chose. Block is the pane that was focused when the picker opened.
+// pick shows the picker, and then goes to the pane, runs the action or fills in the skill
+// that the person chose. Block is the pane that was focused when the picker opened.
 func pick(client, block string) error {
 	session := os.Getenv("REX_SESSION")
 	if err := rex.CheckServer(session); err != nil {
@@ -66,15 +67,31 @@ func pick(client, block string) error {
 		},
 		Screen:  rex.Capture,
 		Actions: func() ([]rex.Action, error) { return rex.LoadActions(client) },
+		Skills:  func() (skills.Installed, error) { return loadSkills(session, block) },
 	})
 	if err != nil {
 		return err
 	}
 	switch {
+	case choice.Skill != nil:
+		return rex.Insert(session, block, choice.Skill.Name+" ") // The space ends the name, and arguments can follow.
 	case choice.Action != nil:
 		return rex.RunAction(choice.Action.Name, session, block, client)
 	case choice.Pane != nil:
 		return rex.GoTo(choice.Pane.Session, choice.Pane.Window, choice.Pane.Block, client)
 	}
 	return nil
+}
+
+// loadSkills lists the skills of the agent in the pane behind the picker. A picker opened
+// with no pane has no agent.
+func loadSkills(session, block string) (skills.Installed, error) {
+	if block == "" {
+		return skills.Installed{}, nil
+	}
+	program, err := rex.Foreground(session, block)
+	if err != nil {
+		return skills.Installed{}, err
+	}
+	return skills.Load(skills.Program{Argv0: program.Argv0, Path: program.Path, Cwd: program.Cwd}, conversations.ClaudeDir())
 }

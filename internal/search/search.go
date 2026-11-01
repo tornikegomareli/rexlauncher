@@ -10,6 +10,7 @@ import (
 	"unicode"
 
 	"github.com/tornikegomareli/rexlauncher/internal/rex"
+	"github.com/tornikegomareli/rexlauncher/internal/skills"
 	"github.com/tornikegomareli/rexlauncher/internal/textutil"
 )
 
@@ -27,14 +28,16 @@ type Reason int
 const (
 	reasonRecent Reason = iota // An empty query: its conversation changed last.
 	reasonName                 // Its name holds the words, or an empty query.
+	ReasonSkill                // A skill, and not a pane.
 	ReasonAction               // An action, and not a pane.
 	reasonSaid                 // Its conversation holds the words.
 	reasonScreen               // Its screen holds the words.
 )
 
-// Result is one row of the picker: an action, or a pane. There is one for each pane,
-// because Enter goes to a pane, and cannot go to a message in it.
+// Result is one row of the picker: a skill, an action, or a pane. There is one for each
+// pane, because Enter goes to a pane, and cannot go to a message in it.
 type Result struct {
+	Skill  *skills.Skill
 	Action *rex.Action
 	Pane   rex.Pane
 	Reason Reason
@@ -50,6 +53,9 @@ type Result struct {
 
 // key tells this row from the others, across searches.
 func (r Result) Key() string {
+	if r.Skill != nil {
+		return r.Skill.Name
+	}
 	if r.Action != nil {
 		return r.Action.Name
 	}
@@ -71,6 +77,8 @@ func (r Result) Heading() string {
 		return "Recent conversations"
 	case reasonName:
 		return "Panes"
+	case ReasonSkill:
+		return "Skills"
 	case ReasonAction:
 		return "Actions"
 	case reasonSaid:
@@ -110,12 +118,14 @@ var Filters = []Filter{
 	{"Screens", func(r Result, empty bool) bool {
 		return r.Pane.Conversation == nil && (empty || r.Matches() > 0)
 	}},
+	{"Skills", func(r Result, _ bool) bool { return r.Skill != nil }},
 	{"Actions", func(r Result, _ bool) bool { return r.Action != nil }},
 }
 
 const (
 	AllTab     = 0
-	ActionsTab = 4
+	SkillsTab  = 4
+	ActionsTab = 5
 )
 
 // search finds panes by name first, then by the words said in their

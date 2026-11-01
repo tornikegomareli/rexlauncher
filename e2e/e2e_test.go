@@ -3,6 +3,7 @@
 package e2e
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -17,7 +18,11 @@ import (
 	"github.com/tornikegomareli/rexlauncher/internal/search"
 )
 
-const stayAliveVariable = "REXLAUNCHER_TEST_STAY_ALIVE"
+const (
+	stayAliveVariable = "REXLAUNCHER_TEST_STAY_ALIVE"
+	// promptVariable makes this program act as an agent: it says each line it gets.
+	promptVariable = "REXLAUNCHER_TEST_PROMPT"
+)
 
 func userLine(text string) string {
 	return `{"type":"user","timestamp":"t","message":{"content":"` + text + `"}}` + "\n"
@@ -46,6 +51,13 @@ func kinds(results []search.Result) []string {
 }
 
 func TestMain(m *testing.M) {
+	if os.Getenv(promptVariable) != "" {
+		lines := bufio.NewScanner(os.Stdin)
+		for lines.Scan() {
+			fmt.Printf("sent [%s]\n", lines.Text())
+		}
+		return
+	}
 	if os.Getenv(stayAliveVariable) != "" {
 		time.Sleep(2 * time.Minute)
 		return
@@ -508,4 +520,100 @@ func TestTheActionWorksWithNoSession(t *testing.T) {
 	if out, err := rex.Run("do", "rexlauncher"); err != nil && strings.Contains(err.Error(), "index is nil") {
 		t.Fatalf("%v: %s", err, out)
 	}
+}
+
+// A real picker in a split, over a pane that runs a program named claude, with a
+// real skill on disk. Enter must leave the skill in that pane, with no Enter after it.
+func TestEnterPutsASkillInThePromptOfTheAgentBehindThePicker(t *testing.T) {
+	claude := t.TempDir()
+	skill := filepath.Join(claude, "skills", "grilling", "SKILL.md")
+	os.MkdirAll(filepath.Dir(skill), 0o755)
+	os.WriteFile(skill, []byte("---\nname: grilling\ndescription: Ask hard questions.\n---\n"), 0o644)
+	t.Setenv("CLAUDE_CONFIG_DIR", claude)
+	server(t)
+
+	dir := t.TempDir()
+	picker := filepath.Join(dir, "rexlauncher")
+	if out, err := exec.Command("go", "build", "-o", picker, "../cmd/rexlauncher").CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	agent := filepath.Join(dir, "claude")
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	program, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(agent, program, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := rex.Run("new", "work", "--shell=none", "--keep-open", "--", "/usr/bin/env", promptVariable+"=1", agent); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	panes, err := rex.ListPanes("")
+	if err != nil || len(panes) != 1 {
+		t.Fatalf("%v: %+v", err, panes)
+	}
+	target := panes[0]
+	started := time.Now().Add(5 * time.Second)
+	for {
+		program, err := rex.Foreground(target.Session, target.Block)
+		if err == nil && filepath.Base(program.Argv0) == "claude" {
+			break
+		}
+		if time.Now().After(started) {
+			t.Fatalf("%v: %+v", err, program)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if out, err := rex.Run("split", "-s", "work", "-b", target.Block, "--shell=none", "--", "/usr/bin/env", "PATH="+os.Getenv("PATH"), picker, "pick", "", target.Block); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	panes, err = rex.ListPanes("")
+	if err != nil || len(panes) != 2 {
+		t.Fatalf("%v: %+v", err, panes)
+	}
+	block := panes[1].Block
+	if block == target.Block {
+		block = panes[0].Block
+	}
+	captureOf := func(b string) string {
+		out, err := rex.Run("capture", "-s", "work", "-b", b, "--trim")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(out)
+	}
+	waitFor := func(b, want string) {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for !strings.Contains(captureOf(b), want) {
+			if time.Now().After(deadline) {
+				t.Fatalf("no %q in:\n%s", want, captureOf(b))
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	waitFor(block, "Search panes")
+	if _, err := rex.Run("send", "-s", "work", "-b", block, "grilling"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(block, "/grilling")
+	waitFor(block, "Put in prompt")
+	if _, err := rex.Run("send-key", "-s", "work", "-b", block, "enter"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(target.Block, "/grilling")
+	time.Sleep(300 * time.Millisecond)
+	if screen := captureOf(target.Block); strings.Contains(screen, "sent [") {
+		t.Fatalf("the skill was sent with Enter:\n%s", screen)
+	}
+	// Enter from the person ends the line, so the agent shows all that the prompt held.
+	if _, err := rex.Run("send-key", "-s", "work", "-b", target.Block, "enter"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(target.Block, "sent [/grilling ]")
 }

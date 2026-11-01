@@ -81,8 +81,12 @@ func (m *model) arrange() {
 		}
 	}
 	if r, ok := m.current(); ok && !m.showsScreen(r) && m.width >= previewMinimumWidth {
-		lines := len(m.matchLines(r, m.width-m.listWidth()-3))
-		m.previewTop = min(m.previewTop, max(lines-1, 0))
+		lines := len(m.previewText(r, m.width-m.listWidth()-3))
+		last := lines - 1
+		if r.Skill != nil {
+			last = lines - m.bodyHeight() // It has no list of matches to read one by one.
+		}
+		m.previewTop = min(m.previewTop, max(last, 0))
 	} else {
 		m.previewTop = 0 // A live screen does not scroll.
 	}

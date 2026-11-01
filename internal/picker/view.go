@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/tornikegomareli/rexlauncher/internal/search"
+	"github.com/tornikegomareli/rexlauncher/internal/skills"
 	"github.com/tornikegomareli/rexlauncher/internal/textutil"
 )
 
@@ -107,7 +108,7 @@ func (m *model) headerLine(width int) string {
 		first := []rune(after)
 		spans = append(spans, span{string(first[:1]), "7"}, span{cut(string(first[1:]), room-ansi.StringWidth(before)-1), ""})
 	case len(m.query) == 0:
-		spans = append(spans, span{" ", "7"}, span{cut("Search panes, conversations and actions", room-1), styleDim})
+		spans = append(spans, span{" ", "7"}, span{cut("Search panes, conversations, skills and actions", room-1), styleDim})
 	default:
 		spans = append(spans, span{" ", "7"})
 	}
@@ -123,12 +124,15 @@ func (m *model) headerLine(width int) string {
 func (m *model) count() string {
 	rows, noun := m.visible(), "pane"
 	for _, r := range rows {
-		if r.Action != nil {
+		if r.Action != nil || r.Skill != nil {
 			noun = "result"
 		}
 	}
-	if m.filter == search.ActionsTab {
+	switch m.filter {
+	case search.ActionsTab:
 		noun = "action"
+	case search.SkillsTab:
+		noun = "skill"
 	}
 	if len(rows) == 1 {
 		return "1 " + noun
@@ -160,6 +164,8 @@ func (m *model) listLines(width, height int) []string {
 			text = textutil.Clean(m.actionsErr.Error())
 		case m.filter == search.ActionsTab:
 			text = "No action has these words"
+		case m.filter == search.SkillsTab:
+			text = m.noSkills()
 		case len(m.panes) == 0 && !m.textLoaded:
 			text = ""
 		case len(m.query) == 0:
@@ -185,6 +191,21 @@ func (m *model) listLines(width, height int) []string {
 	return lines
 }
 
+// noSkills says why the Skills tab is empty.
+func (m *model) noSkills() string {
+	switch {
+	case m.skillsErr != nil:
+		return textutil.Clean(m.skillsErr.Error())
+	case !m.skillsLoaded:
+		return "Reading skills…"
+	case m.installed.Agent == "":
+		return "No agent runs in this pane. Open the picker from Claude Code, Codex or pi"
+	case len(m.query) == 0:
+		return m.installed.Agent + " has no skills here"
+	}
+	return "No skill has these words"
+}
+
 // rowLine is one row: the name, why it is a result, and the number of matches on
 // the right.
 func (m *model) rowLine(r search.Result, width int, selected bool) string {
@@ -194,6 +215,16 @@ func (m *model) rowLine(r search.Result, width int, selected bool) string {
 		dim, background, bar = "", styleSelected, "▌"
 	}
 	room := width - 2
+	if r.Skill != nil {
+		name := cut(textutil.Clean(r.Skill.Name), room)
+		spans := append([]span{{bar, styleAccent}, {" ", ""}}, marked(name, words, styleBold)...)
+		room -= ansi.StringWidth(name) + 2
+		if room > 3 {
+			spans = append(spans, span{"  ", ""})
+			spans = append(spans, marked(cut(textutil.Clean(r.Skill.Description), room), words, dim)...)
+		}
+		return paint(spans, background, width)
+	}
 	if r.Action != nil {
 		title := cut(textutil.Clean(r.Action.Title), room)
 		spans := append([]span{{bar, styleAccent}, {" ", ""}}, marked(title, words, styleBold)...)
@@ -261,7 +292,9 @@ func (m *model) rowLine(r search.Result, width int, selected bool) string {
 func (m *model) previewLines(width, height int) []string {
 	r, ok := m.current()
 	lines := make([]string, 0, height)
-	if ok && r.Action != nil {
+	if ok && r.Skill != nil {
+		lines = append(lines, m.skillLines(r, width)[m.previewTop:]...)
+	} else if ok && r.Action != nil {
 		lines = append(lines,
 			paint([]span{{cut(textutil.Clean(r.Action.Title), width), styleBold}}, "49", width),
 			strings.Repeat(" ", width),
@@ -304,6 +337,43 @@ func (m *model) detail(label, value string, width int) string {
 	return paint([]span{{fmt.Sprintf("%-9s", label), styleDim}, {cut(value, width-9), ""}}, "49", width)
 }
 
+// previewText is the part of a preview that scrolls.
+func (m *model) previewText(r search.Result, width int) []string {
+	if r.Skill != nil {
+		return m.skillLines(r, width)
+	}
+	return m.matchLines(r, width)
+}
+
+// skillLines is what a person needs to choose a skill: what it does, then where it
+// comes from and the rest of its frontmatter. A long value wraps, so nothing is cut.
+func (m *model) skillLines(r search.Result, width int) []string {
+	words, blank := m.words(), strings.Repeat(" ", width)
+	s := r.Skill
+	lines := []string{paint(marked(cut(textutil.Clean(s.Name), width), words, styleBold), "49", width), blank}
+	if s.Description != "" {
+		for _, line := range wrap(textutil.Clean(s.Description), width) {
+			lines = append(lines, paint(marked(line, words, ""), "49", width))
+		}
+		lines = append(lines, blank)
+	}
+	details := []skills.Field{{Label: "Agent", Value: m.installed.Agent}, {Label: "Source", Value: s.Source}, {Label: "File", Value: search.ShortHome(s.Path)}}
+	labels := 0
+	details = append(details, s.Fields...)
+	for _, d := range details {
+		labels = max(labels, ansi.StringWidth(textutil.Clean(d.Label)))
+	}
+	labels = min(labels+2, width/2)
+	for _, d := range details {
+		label := cut(textutil.Clean(d.Label), labels-2)
+		for _, line := range wrap(textutil.Clean(d.Value), max(width-labels, 1)) {
+			lines = append(lines, paint([]span{{fmt.Sprintf("%-*s", labels, label), styleDim}, {line, ""}}, "49", width))
+			label = ""
+		}
+	}
+	return lines
+}
+
 // screenLines is the end of the pane's screen.
 func (m *model) screenLines(r search.Result, width, height int) []string {
 	var lines []string
@@ -338,8 +408,13 @@ func (m *model) matchLines(r search.Result, width int) []string {
 
 func (m *model) footerLine(width int) string {
 	enter := " Go to pane   "
-	if r, ok := m.current(); ok && r.Action != nil {
-		enter = " Run action   "
+	if r, ok := m.current(); ok {
+		switch {
+		case r.Skill != nil:
+			enter = " Put in prompt   "
+		case r.Action != nil:
+			enter = " Run action   "
+		}
 	}
 	spans := []span{{" ↵", styleBold}, {enter, styleDim}, {"tab", styleBold}, {" Filter   ", styleDim}, {"esc", styleBold}, {" Close", styleDim}}
 	used := 0

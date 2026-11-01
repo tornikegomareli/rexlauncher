@@ -8,6 +8,8 @@ import (
 
 	"github.com/tornikegomareli/rexlauncher/internal/conversations"
 	"github.com/tornikegomareli/rexlauncher/internal/rex"
+	"github.com/tornikegomareli/rexlauncher/internal/skills"
+	"github.com/tornikegomareli/rexlauncher/internal/textutil"
 )
 
 func said(role, text string) conversations.Message {
@@ -301,5 +303,44 @@ func TestSearchActionsPutsTitlesBeforeKeywords(t *testing.T) {
 	}, "theme"))
 	if strings.Join(got, " ") != "by-title by-keyword" {
 		t.Fatalf("order: %q", got)
+	}
+}
+
+func skillNames(results []Result) string {
+	var names []string
+	for _, r := range results {
+		names = append(names, r.Skill.Name)
+	}
+	return strings.Join(names, " ")
+}
+
+func TestSearchSkillsPutsNamesBeforeDescriptions(t *testing.T) {
+	installed := []skills.Skill{
+		{Name: "/code-review", Description: "Look at a diff."},
+		{Name: "/notes", Description: "Write a review of the week."},
+		{Name: "/plugin:review-pr", Description: "Look at a pull request."},
+		{Name: "/tests", Description: "Run the tests."},
+	}
+	if got := skillNames(SearchSkills(installed, "review")); got != "/plugin:review-pr /code-review /notes" {
+		t.Fatalf("got %q", got)
+	}
+	if got := skillNames(SearchSkills(installed, "/code")); got != "/code-review" {
+		t.Fatalf("with its sign: %q", got)
+	}
+	if got := skillNames(SearchSkills(installed, "")); got != "/code-review /notes /plugin:review-pr /tests" {
+		t.Fatalf("empty query: %q", got)
+	}
+}
+
+func TestAllPutsSkillsAfterPanesAndBeforeActionsAndConversations(t *testing.T) {
+	said := rex.Pane{Block: "said", Conversation: &conversations.Conversation{}, Text: []textutil.Entry{{Text: "review it", Lower: "review it"}}}
+	named := rex.Pane{Block: "named", SessionLabel: "review", Name: "shell"}
+	rows := All([]rex.Pane{said, named}, []skills.Skill{{Name: "/review"}}, []rex.Action{{Name: "a", Title: "Review Action"}}, "review")
+	var order []string
+	for _, r := range rows {
+		order = append(order, r.Heading())
+	}
+	if got := strings.Join(order, " "); got != "Panes Skills Actions Conversations" {
+		t.Fatalf("got %q", got)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tornikegomareli/rexlauncher/internal/rex"
 	"github.com/tornikegomareli/rexlauncher/internal/search"
+	"github.com/tornikegomareli/rexlauncher/internal/skills"
 	"github.com/tornikegomareli/rexlauncher/internal/textutil"
 )
 
@@ -36,21 +37,24 @@ type Sources struct {
 	Screen func(rex.Pane) (string, error)
 	// Actions lists what Rex can do.
 	Actions func() ([]rex.Action, error)
+	// Skills lists what the agent in the pane behind the picker can run.
+	Skills func() (skills.Installed, error)
 }
 
-// Choice is what the person chose: a pane, an action, or neither.
+// Choice is what the person chose: a pane, an action, a skill, or none of them.
 type Choice struct {
 	Pane   *rex.Pane
 	Action *rex.Action
+	Skill  *skills.Skill
 }
 
 // Run shows the picker until the person chooses or closes it.
 func Run(sources Sources) (Choice, error) {
-	m := &model{loadPanes: sources.Panes, loadText: sources.Text, capture: sources.Screen, loadActions: sources.Actions}
+	m := &model{loadPanes: sources.Panes, loadText: sources.Text, capture: sources.Screen, loadActions: sources.Actions, loadSkills: sources.Skills}
 	if _, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
 		return Choice{}, err
 	}
-	return Choice{Pane: m.chosen, Action: m.chosenAction}, m.err
+	return Choice{Pane: m.chosen, Action: m.chosenAction, Skill: m.chosenSkill}, m.err
 }
 
 // model is the state of the picker.
@@ -60,17 +64,21 @@ type model struct {
 	capture   func(rex.Pane) (string, error)
 	// loadActions lists what Rex can do.
 	loadActions func() ([]rex.Action, error)
+	loadSkills  func() (skills.Installed, error)
 
-	actions    []rex.Action
-	actionsErr error
-	panes      []rex.Pane
-	textLoaded bool
-	query      []rune
-	cursor     int
-	filter     int
-	rows       []search.Result
-	selected   int
-	offset     int
+	actions      []rex.Action
+	actionsErr   error
+	installed    skills.Installed
+	skillsLoaded bool
+	skillsErr    error
+	panes        []rex.Pane
+	textLoaded   bool
+	query        []rune
+	cursor       int
+	filter       int
+	rows         []search.Result
+	selected     int
+	offset       int
 
 	screens    map[string]string
 	capturing  bool
@@ -81,6 +89,7 @@ type model struct {
 
 	chosen       *rex.Pane
 	chosenAction *rex.Action
+	chosenSkill  *skills.Skill
 	err          error
 }
 
@@ -92,6 +101,10 @@ type (
 	actionsMsg struct {
 		actions []rex.Action
 		err     error
+	}
+	skillsMsg struct {
+		installed skills.Installed
+		err       error
 	}
 	textMsg    struct{ panes []rex.Pane }
 	captureMsg struct {
@@ -106,13 +119,16 @@ func tick() tea.Cmd {
 }
 
 func (m *model) Init() tea.Cmd {
-	load, loadActions := m.loadPanes, m.loadActions
+	load, loadActions, loadSkills := m.loadPanes, m.loadActions, m.loadSkills
 	return tea.Batch(tick(), func() tea.Msg {
 		panes, err := load()
 		return panesMsg{panes, err}
 	}, func() tea.Msg {
 		actions, err := loadActions()
 		return actionsMsg{actions, err}
+	}, func() tea.Msg {
+		installed, err := loadSkills()
+		return skillsMsg{installed, err}
 	})
 }
 
@@ -137,6 +153,9 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.captureSelected(), func() tea.Msg { return textMsg{load(panes)} })
 	case actionsMsg:
 		m.actions, m.actionsErr = msg.actions, msg.err
+		m.refresh(true)
+	case skillsMsg:
+		m.installed, m.skillsErr, m.skillsLoaded = msg.installed, msg.err, true
 		m.refresh(true)
 	case textMsg:
 		m.panes, m.textLoaded = msg.panes, true
@@ -210,9 +229,12 @@ func (m *model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "enter":
 		if r, ok := m.current(); ok {
-			if r.Action != nil {
+			switch {
+			case r.Skill != nil:
+				m.chosenSkill = r.Skill
+			case r.Action != nil:
 				m.chosenAction = r.Action
-			} else {
+			default:
 				m.chosen = &r.Pane
 			}
 			return m, tea.Quit
@@ -293,7 +315,7 @@ func (m *model) refresh(keepSelection bool) {
 	if r, ok := m.current(); ok && keepSelection {
 		keep = r.Key()
 	}
-	m.rows = search.All(m.panes, m.actions, string(m.query))
+	m.rows = search.All(m.panes, m.installed.Skills, m.actions, string(m.query))
 	m.selected, m.offset, m.previewTop = 0, 0, 0
 	for i, r := range m.visible() {
 		if r.Key() == keep {
@@ -306,14 +328,20 @@ func (m *model) refresh(keepSelection bool) {
 func (m *model) visible() []search.Result {
 	empty := len(m.words()) == 0
 	var rows []search.Result
-	actions := 0
+	actions, installed := 0, 0
 	for _, r := range m.rows {
+		// The All tab shows a few of these, once there is a query. The others show none.
 		if r.Action != nil && m.filter != search.ActionsTab {
-			// The All tab shows a few, once there is a query. The others show none.
 			if m.filter != search.AllTab || empty || actions == search.MaxActionsInAll {
 				continue
 			}
 			actions++
+		}
+		if r.Skill != nil && m.filter != search.SkillsTab {
+			if m.filter != search.AllTab || empty || installed == search.MaxSkillsInAll {
+				continue
+			}
+			installed++
 		}
 		if search.Filters[m.filter].Keep(r, empty) {
 			rows = append(rows, r)
@@ -347,7 +375,7 @@ func (m *model) words() []string {
 
 // showsScreen says if the preview of a row is the pane's screen.
 func (m *model) showsScreen(r search.Result) bool {
-	return r.Action == nil && (len(m.words()) == 0 || r.Matches() == 0)
+	return r.Action == nil && r.Skill == nil && (len(m.words()) == 0 || r.Matches() == 0)
 }
 
 // captureSelected reads the screen of the selected pane, if the preview shows it.
