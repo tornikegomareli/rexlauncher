@@ -696,3 +696,27 @@ func TestPastedLinesStaySeparateWords(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestWordsInDifferentMessagesExplainTheEmptyList(t *testing.T) {
+	m := open(t, 120, 30, talking(t, "a", "x", said("user", "one"), said("user", "two")))
+	typeText(m, "one two")
+	if out := view(m); !strings.Contains(out, "in one message or line") {
+		t.Fatalf("got\n%s", out)
+	}
+}
+
+func TestANarrowFooterDropsThePosition(t *testing.T) {
+	m := open(t, 40, 30, demoPanes(t)...)
+	lines := strings.Split(view(m), "\n")
+	if footer := lines[len(lines)-1]; !strings.Contains(footer, "Close") || strings.Contains(footer, "/") {
+		t.Fatalf("got %q", footer)
+	}
+}
+
+func TestARowSaysWhatItsNumberCounts(t *testing.T) {
+	m := open(t, 120, 30, talking(t, "a", "x", said("user", "word one"), said("user", "word two")))
+	typeText(m, "word")
+	if out := view(m); !strings.Contains(out, "2 matches") {
+		t.Fatalf("got\n%s", out)
+	}
+}

@@ -431,7 +431,7 @@ func (m *model) listLines(width, height int) []string {
 	rows := m.visible()
 	lines := make([]string, 0, height)
 	if len(rows) == 0 {
-		text := "No pane has these words"
+		text := "No pane has these words in one message or line"
 		switch {
 		case len(m.panes) == 0 && !m.textLoaded:
 			text = ""
@@ -484,7 +484,7 @@ func (m *model) rowLine(r result, width int, selected bool) string {
 
 	accessory := ""
 	if r.Matches() > 1 {
-		accessory = fmt.Sprint(r.Matches())
+		accessory = fmt.Sprintf("%d matches", r.Matches())
 	} else if len(words) == 0 && !r.Pane.active().IsZero() {
 		accessory = age(r.Pane.active(), time.Now())
 	}
@@ -602,7 +602,9 @@ func (m *model) footerLine(width int) string {
 	}
 	if rows := len(m.visible()); rows > 0 {
 		position := fmt.Sprintf("%d/%d", m.selected+1, rows)
-		spans = append(spans, span{strings.Repeat(" ", max(width-used-ansi.StringWidth(position)-1, 0)) + position, styleDim})
+		if gap := width - used - ansi.StringWidth(position) - 1; gap > 0 {
+			spans = append(spans, span{strings.Repeat(" ", gap) + position, styleDim})
+		}
 	}
 	return paint(spans, "49", width)
 }
