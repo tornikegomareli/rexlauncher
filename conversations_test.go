@@ -317,3 +317,20 @@ func TestTheNewestConversationWinsItsPane(t *testing.T) {
 		t.Fatalf("got %+v", c)
 	}
 }
+
+func TestACorruptOffsetStartsAgain(t *testing.T) {
+	dir := t.TempDir()
+	transcript := writeLines(t, strings.TrimSuffix(userLine("hello"), "\n"))
+	for _, content := range []string{"1 -5", "-1 0", "nonsense", "5"} {
+		if err := os.WriteFile(filepath.Join(dir, "c.offset"), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		path, err := updateIndex(dir, "c", transcript)
+		if err != nil {
+			t.Fatalf("%q: %v", content, err)
+		}
+		if got := messageEntries(path); len(got) != 1 || got[0].Text != "hello" {
+			t.Fatalf("%q: got %+v", content, got)
+		}
+	}
+}

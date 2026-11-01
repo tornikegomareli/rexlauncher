@@ -131,7 +131,7 @@ func updateIndex(dir, id, transcript string) (string, error) {
 		return "", err
 	}
 	// The transcript was replaced, or the index is not what the offset describes.
-	if offset > info.Size() || int64(len(kept)) < size {
+	if offset < 0 || size < 0 || offset > info.Size() || int64(len(kept)) < size {
 		offset, size = 0, 0
 	}
 	index.Write(kept[:size]) // More than size is what a killed process wrote last.
