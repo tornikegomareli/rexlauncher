@@ -231,6 +231,15 @@ func TestFindConversationsMatchesSessionsToTheirPanes(t *testing.T) {
 	}
 }
 
+func TestFindConversationsIgnoresANameClaudeCodeMadeUp(t *testing.T) {
+	claude := t.TempDir()
+	const pane = "block:0000aaaa-0000-0000-0000-000000000001"
+	liveSession(t, claude, pane, "conv", "interactive", "drooop-crazy-demos-c8", userLine("hello"))
+	if c := Find(claude)[pane]; c.ID != "conv" || c.Name != "" {
+		t.Fatalf("got %+v", c)
+	}
+}
+
 func TestFindConversationsLeavesOutAProcessThatIsGone(t *testing.T) {
 	claude := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(claude, "sessions"), 0o755); err != nil {

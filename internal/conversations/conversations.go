@@ -236,6 +236,10 @@ type Conversation struct {
 
 var rexBlockVariable = regexp.MustCompile(`\bREX_BLOCK=(block:[0-9a-f-]+)`)
 
+// madeUpName is the name Claude Code gives a session nobody named: its folder and two
+// hex digits, such as rexd-82. The terminal's title says more.
+var madeUpName = regexp.MustCompile(`^[a-z0-9._-]+-[0-9a-f]{2}$`)
+
 // Find returns the live Claude Code sessions by the Rex block they
 // run in. Each one has a file named after its process, and the process's
 // environment names its block.
@@ -274,7 +278,10 @@ func Find(claudeDir string) map[string]Conversation {
 			return
 		}
 		blocks[i] = string(match[1])
-		found[i] = Conversation{ID: session.SessionID, Name: session.Name, Transcript: transcripts[0]}
+		found[i] = Conversation{ID: session.SessionID, Transcript: transcripts[0]}
+		if !madeUpName.MatchString(session.Name) {
+			found[i].Name = session.Name
+		}
 		if info, err := os.Stat(transcripts[0]); err == nil {
 			found[i].Active = info.ModTime()
 		}
