@@ -201,6 +201,17 @@ func listPanes(self string) ([]pane, error) {
 	return panes, nil
 }
 
+var defaultWindowLabel = regexp.MustCompile(`^Window [0-9a-f]{8}$`)
+
+// windowName is the name a person gave a window. Rex makes one up for the others, and
+// it tells nobody anything.
+func windowName(label string) string {
+	if defaultWindowLabel.MatchString(label) {
+		return ""
+	}
+	return label
+}
+
 func sessionPanes(session, self string) ([]pane, error) {
 	var view struct {
 		Label   string `json:"label"`
@@ -235,7 +246,7 @@ func sessionPanes(session, self string) ([]pane, error) {
 					Session:      session,
 					SessionLabel: view.Label,
 					Window:       window.ID,
-					WindowLabel:  window.Label,
+					WindowLabel:  windowName(window.Label),
 					Block:        block.ID,
 					Name:         block.Label,
 				})

@@ -232,3 +232,11 @@ func TestGoingToAClosedPaneSaysSoPlainly(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestAWindowNameRexMadeUpIsLeftOut(t *testing.T) {
+	for label, want := range map[string]string{"Window 6091e3fd": "", "api": "api", "Window for logs": "Window for logs"} {
+		if got := windowName(label); got != want {
+			t.Errorf("%q: got %q", label, got)
+		}
+	}
+}
