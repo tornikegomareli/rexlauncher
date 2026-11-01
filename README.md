@@ -8,7 +8,7 @@
 
 Rex Launcher is a [rexd](https://github.com/tornikegomareli/rexd) plugin for [Rex](https://www.superlogical.com/rex). It searches every pane on your server, and the words said in the Claude Code conversations inside them, then goes to the pane you choose.
 
-Type part of a name, or a word you remember from a conversation.
+Type part of a name, or a word you remember from a conversation. It also runs Rex's actions, so `split d` and Enter splits the pane you were on.
 
 ## Install
 
@@ -23,7 +23,7 @@ To remove it, run `rexd remove tornikegomareli.rexlauncher`.
 It needs:
 
 - [rexd](https://github.com/tornikegomareli/rexd) and Go, to build the plugin.
-- Remote Control, in Rex's Settings under Rex Server. Rex only lets a program outside the app change the session it shows when this is on. Without it, Enter still focuses the pane in its session, and shows Rex's error.
+- Remote Control, in Rex's Settings under Rex Server. Rex only lets a program outside the app change the session it shows, or perform its actions, when this is on. Without it, Enter on a pane still focuses the pane in its session, and shows Rex's error.
 
 ## Keys
 
@@ -45,8 +45,8 @@ rex.bind("cmd+shift+k", has_launcher and "rexlauncher" or "session.switch")
 | Search | Type |
 | Move in the list | Up, Down, Ctrl+P, Ctrl+N |
 | Move by a page, or to the first or last row | PageUp, PageDown, Home, End |
-| Go to the selected pane | Enter, or click the selected row |
-| Filter: All, Panes, Conversations, Screens | Tab, Shift+Tab |
+| Go to the selected pane, or run the selected action | Enter, or click the selected row |
+| Filter: All, Panes, Conversations, Screens, Actions | Tab, Shift+Tab |
 | Scroll the matches in the preview | Shift+Up, Shift+Down, or the wheel |
 | Delete a word, or the whole query | Ctrl+W, Ctrl+U |
 | Close | Esc |
@@ -56,6 +56,14 @@ The picker has one row for each pane: its name, and the best match in it. With a
 With no query, the picker lists the conversations that changed last, and then the other panes. A pane in the window of the picker stays under Panes and out of the recent ones, because it is behind the picker.
 
 Press the key again to close the picker.
+
+## Actions
+
+The picker lists the actions Rex's palette has, and those of your `init.lua`, such as Split Pane Down, Change Theme… and Toggle Sidebar. An action runs on the pane you were on when you opened the picker.
+
+With a query, the All tab shows up to 4 actions, below the panes with that name and above the conversations. The Actions tab lists all of them.
+
+It leaves out actions that close or restart something, such as Close Pane, because Enter runs the first row, and a word you type to find a conversation can match their titles. It also leaves out actions that need an argument. Rex's palette has both.
 
 ## What it searches
 

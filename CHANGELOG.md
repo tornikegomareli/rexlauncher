@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Run Rex's actions from the picker, such as Split Pane Down and Change Theme…, on the pane you were on.
+
 ## 0.1.0
 
 The first version.
