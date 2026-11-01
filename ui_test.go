@@ -494,3 +494,16 @@ func TestTheBackgroundOfTheSelectedRowDoesNotStop(t *testing.T) {
 		t.Fatalf("an empty parameter resets the colors: %q", out)
 	}
 }
+
+// Fast typing can arrive as one message, which must not read as a key's name.
+func TestTypedWordsAreNotKeys(t *testing.T) {
+	m := open(t, 100, 30, demoPanes(t)...)
+	send(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("tab")})
+	if string(m.query) != "tab" || m.filter != 0 {
+		t.Errorf("query %q, filter %d", string(m.query), m.filter)
+	}
+	send(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("enter")})
+	if m.chosen != nil || string(m.query) != "tabenter" {
+		t.Errorf("chosen %v, query %q", m.chosen, string(m.query))
+	}
+}

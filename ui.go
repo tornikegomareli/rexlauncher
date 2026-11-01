@@ -166,7 +166,11 @@ func (m *model) listWidth() int {
 }
 
 func (m *model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+	name := msg.String()
+	if msg.Type == tea.KeyRunes && !msg.Alt {
+		name = "" // Typed text, which can spell the name of a key.
+	}
+	switch name {
 	case "esc", "ctrl+c":
 		return m, tea.Quit
 	case "enter":
