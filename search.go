@@ -301,7 +301,10 @@ func lowerRunes(s string) string {
 // the terminal's colors.
 func clean(s string) string {
 	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		// A joiner or a variation selector makes one emoji of several, and terminals
+		// disagree on its width. A line that is wider than counted wraps and breaks the
+		// whole picker, so the parts stay separate.
+		if unicode.IsControl(r) || r == '‍' || r == '️' {
 			return -1
 		}
 		return r

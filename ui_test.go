@@ -720,3 +720,14 @@ func TestARowSaysWhatItsNumberCounts(t *testing.T) {
 		t.Fatalf("got\n%s", out)
 	}
 }
+
+func TestAJoinedEmojiCannotChangeTheWidthOfALine(t *testing.T) {
+	for _, text := range []string{"👨‍👩‍👧 family", "🏳️‍🌈 flag"} {
+		if got := clean(text); strings.ContainsAny(got, "‍️") {
+			t.Errorf("%q kept a joiner: %q", text, got)
+		}
+		if got := screenText(text + "\n"); strings.ContainsAny(got, "‍️") {
+			t.Errorf("%q kept a joiner on a screen: %q", text, got)
+		}
+	}
+}
