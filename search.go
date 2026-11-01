@@ -148,7 +148,7 @@ func search(panes []pane, query string) []result {
 		name := lowerRunes(p.SessionLabel + " " + p.WindowLabel + " " + p.Name + " " + shortHome(p.Cwd))
 		named := containsAll(name, words)
 		found := p.matches(words)
-		letters := lettersOf(p.title(), words)
+		letters := lettersOf(clean(p.title()), words) // Positions in the name as drawn.
 		if !named && len(found) == 0 && letters == nil {
 			continue
 		}
