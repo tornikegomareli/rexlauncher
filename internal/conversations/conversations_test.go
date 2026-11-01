@@ -1,4 +1,4 @@
-package main
+package conversations
 
 import (
 	"encoding/json"
@@ -41,7 +41,7 @@ func TestExtractMessage(t *testing.T) {
 }
 
 func TestAMessageStaysOnOneLine(t *testing.T) {
-	m := message{Role: "user", At: "t", Text: "one\ntwo\tthree\r\nfour"}
+	m := Message{Role: "user", At: "t", Text: "one\ntwo\tthree\r\nfour"}
 	got := parseMessage(strings.TrimSuffix(m.line(), "\n"))
 	if got.Text != "one two three four" || got.Role != "user" || got.At != "t" {
 		t.Fatalf("got %+v", got)
@@ -131,7 +131,7 @@ func TestPruneIndexKeepsRecentOnes(t *testing.T) {
 	long := time.Now().Add(-2 * indexMaxAge)
 	os.Chtimes(filepath.Join(dir, "old.txt"), long, long)
 
-	pruneIndex(dir)
+	Prune(dir)
 
 	for name, want := range map[string]bool{"old.txt": false, "old.offset": false, "new.txt": true, "new.offset": true} {
 		if _, err := os.Stat(filepath.Join(dir, name)); (err == nil) != want {
@@ -224,7 +224,7 @@ func TestFindConversationsMatchesSessionsToTheirPanes(t *testing.T) {
 	claude := t.TempDir()
 	const pane = "block:0000aaaa-0000-0000-0000-000000000001"
 	liveSession(t, claude, pane, "conv", "interactive", "Fix it", userLine("hello"))
-	found := findConversations(claude)
+	found := Find(claude)
 	c, ok := found[pane]
 	if !ok || c.ID != "conv" || c.Name != "Fix it" || c.Active.IsZero() {
 		t.Fatalf("got %+v", found)
@@ -243,7 +243,7 @@ func TestFindConversationsLeavesOutAProcessThatIsGone(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(claude, "sessions", "999999.json"), gone, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if found := findConversations(claude); len(found) != 0 {
+	if found := Find(claude); len(found) != 0 {
 		t.Fatalf("got %+v", found)
 	}
 }
@@ -254,31 +254,8 @@ func TestAnInteractiveSessionWinsItsPane(t *testing.T) {
 	const pane = "block:0000aaaa-0000-0000-0000-000000000002"
 	liveSession(t, claude, pane, "talk", "interactive", "The conversation", userLine("hello"))
 	liveSession(t, claude, pane, "oneshot", "print", "A one-shot run", userLine("hello"))
-	if c := findConversations(claude)[pane]; c.ID != "talk" {
+	if c := Find(claude)[pane]; c.ID != "talk" {
 		t.Fatalf("got %+v", c)
-	}
-}
-
-func TestLoadTextReadsAConversationFromItsPane(t *testing.T) {
-	claude, cache := t.TempDir(), t.TempDir()
-	const block = "block:0000aaaa-0000-0000-0000-000000000003"
-	fakeRex(t, map[string]any{
-		"session.list": map[string]any{"sessions": []map[string]any{{"session_id": "s"}}},
-		"session.view.s": map[string]any{"label": "work", "windows": []map[string]any{{"window_id": "w", "layers": []map[string]any{
-			{"blocks": []map[string]any{{"block_id": block, "label": "shell", "creator_name": "com.superlogical.terminal"}}},
-		}}}},
-	})
-	liveSession(t, claude, block, "conv", "interactive", "Fix it", userLine("zebrafish"))
-	panes, err := loadPanes("", claude)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if panes[0].Name != "Fix it" || panes[0].Conversation == nil {
-		t.Fatalf("got %+v", panes[0])
-	}
-	panes = loadText(panes, cache)
-	if got := search(panes, "zebrafish"); len(got) != 1 || got[0].Reason != reasonSaid {
-		t.Fatalf("got %+v", got)
 	}
 }
 
@@ -295,12 +272,9 @@ func TestAMessageThatStartsWithATagIsAPersonsWords(t *testing.T) {
 	}
 }
 
-func TestPastedTextIsSearchedWithoutItsTag(t *testing.T) {
+func TestPastedTextIsKept(t *testing.T) {
 	if _, ok := extractMessage([]byte(userLine("<pasted_content>the log</pasted_content>"))); !ok {
 		t.Fatal("left out")
-	}
-	if got := plain(`<pasted_content id="2c24">the zebrafish log</pasted_content>`); got != "the zebrafish log" {
-		t.Fatalf("got %q", got)
 	}
 }
 
@@ -313,9 +287,18 @@ func TestTheNewestConversationWinsItsPane(t *testing.T) {
 	if err := os.Chtimes(filepath.Join(claude, "projects", "-some-folder", "stale.jsonl"), old, old); err != nil {
 		t.Fatal(err)
 	}
-	if c := findConversations(claude)[pane]; c.ID != "fresh" {
+	if c := Find(claude)[pane]; c.ID != "fresh" {
 		t.Fatalf("got %+v", c)
 	}
+}
+
+func writeLines(t *testing.T, lines ...string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "file.txt")
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestACorruptOffsetStartsAgain(t *testing.T) {
@@ -329,7 +312,7 @@ func TestACorruptOffsetStartsAgain(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%q: %v", content, err)
 		}
-		if got := messageEntries(path); len(got) != 1 || got[0].Text != "hello" {
+		if got := readMessages(path); len(got) != 1 || got[0].Text != "hello" {
 			t.Fatalf("%q: got %+v", content, got)
 		}
 	}

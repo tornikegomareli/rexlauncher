@@ -1,4 +1,8 @@
-package main
+package picker
+
+import (
+	"github.com/tornikegomareli/rexlauncher/internal/search"
+)
 
 // Where things are on the screen. The drawing and the mouse both read this, so they
 // cannot disagree.
@@ -11,14 +15,14 @@ const (
 // tabSpan is where a tab's label and its padding sit on the tabs line.
 func tabSpan(index int) (from, to int) {
 	from = 1
-	for _, f := range filters[:index] {
-		from += len(f.name) + 3 // Its padding, and the space between tabs.
+	for _, f := range search.Filters[:index] {
+		from += len(f.Name) + 3 // Its padding, and the space between tabs.
 	}
-	return from, from + len(filters[index].name) + 2
+	return from, from + len(search.Filters[index].Name) + 2
 }
 
 func tabAt(x int) (int, bool) {
-	for i := range filters {
+	for i := range search.Filters {
 		if from, to := tabSpan(i); x >= from && x < to {
 			return i, true
 		}

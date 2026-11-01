@@ -1,88 +1,55 @@
-package main
+// Package search finds panes by name, by what was said in them, and by their screens,
+// and finds actions by name.
+package search
 
 import (
-	"fmt"
 	"os"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
 	"unicode"
 
-	"github.com/charmbracelet/x/ansi"
+	"github.com/tornikegomareli/rexlauncher/internal/rex"
+	"github.com/tornikegomareli/rexlauncher/internal/textutil"
 )
 
-const (
-	maxInPreview = 20
-	maxRecent    = 6
+const maxRecent = 6
 
-	// Characters of text around a match. A row keeps few before it, because it is
-	// cut at its end, and the match must stay in view.
-	rowBefore     = 8
-	rowLength     = 200
-	previewBefore = 200
-	previewLength = 800
-)
-
-// entry is one message or screen line of a pane, in the form the search needs.
-type entry struct {
-	Text  string
-	lower string
-	Label string
-	At    string
-}
-
-// screenEntries splits a screen's text, the newest line first.
-func screenEntries(text string) []entry {
-	lines := strings.Split(text, "\n")
-	seen := map[string]bool{}
-	var entries []entry
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(clean(lines[i]))
-		if line == "" || seen[line] {
-			continue
-		}
-		seen[line] = true
-		entries = append(entries, entry{Text: line, lower: lowerRunes(line)})
-	}
-	return entries
-}
-
-// match is an entry that holds the words of a query.
-type match struct {
-	entry
+// Match is an entry that holds the words of a query.
+type Match struct {
+	textutil.Entry
 	Strong bool // Each word occurs at the start of a word.
 }
 
-// reason is why a pane is a row. The order here is the order of the sections.
-type reason int
+// Reason is why a pane is a row. The order here is the order of the sections.
+type Reason int
 
 const (
-	reasonRecent reason = iota // An empty query: its conversation changed last.
+	reasonRecent Reason = iota // An empty query: its conversation changed last.
 	reasonName                 // Its name holds the words, or an empty query.
-	reasonAction               // An action, and not a pane.
+	ReasonAction               // An action, and not a pane.
 	reasonSaid                 // Its conversation holds the words.
 	reasonScreen               // Its screen holds the words.
 )
 
-// result is one row of the picker: an action, or a pane. There is one for each pane,
+// Result is one row of the picker: an action, or a pane. There is one for each pane,
 // because Enter goes to a pane, and cannot go to a message in it.
-type result struct {
-	Action *action
-	Pane   pane
-	Reason reason
+type Result struct {
+	Action *rex.Action
+	Pane   rex.Pane
+	Reason Reason
 	// Partial says the words only occur inside other words.
 	Partial bool
 	Named   bool // The name of the pane holds the words.
 	// Letters are the positions in the title that a query matches with letters
 	// left out, as "tlbr" in "tilebar".
 	Letters []int
-	Found   []match // The best first.
+	Found   []Match // The best first.
 	at      string
 }
 
 // key tells this row from the others, across searches.
-func (r result) key() string {
+func (r Result) Key() string {
 	if r.Action != nil {
 		return r.Action.Name
 	}
@@ -90,12 +57,12 @@ func (r result) key() string {
 }
 
 // Matches is the number of messages or lines that hold the words.
-func (r result) Matches() int {
+func (r Result) Matches() int {
 	return len(r.Found)
 }
 
 // Heading is the name of the section that the row is in.
-func (r result) Heading() string {
+func (r Result) Heading() string {
 	if r.Partial {
 		return "Partial matches"
 	}
@@ -104,7 +71,7 @@ func (r result) Heading() string {
 		return "Recent conversations"
 	case reasonName:
 		return "Panes"
-	case reasonAction:
+	case ReasonAction:
 		return "Actions"
 	case reasonSaid:
 		return "Conversations"
@@ -115,7 +82,7 @@ func (r result) Heading() string {
 // before says if a row comes before another. Partial matches come after all the
 // others, and within a section, a whole name comes before letters left out, and the
 // newest comes first.
-func (r result) before(other result) bool {
+func (r Result) before(other Result) bool {
 	if r.Partial != other.Partial {
 		return other.Partial
 	}
@@ -129,26 +96,26 @@ func (r result) before(other result) bool {
 }
 
 // filter is one tab of the picker.
-type filter struct {
-	name string
-	keep func(r result, emptyQuery bool) bool
+type Filter struct {
+	Name string
+	Keep func(r Result, emptyQuery bool) bool
 }
 
-var filters = []filter{
-	{"All", func(result, bool) bool { return true }},
-	{"Panes", func(r result, _ bool) bool { return r.Named }},
-	{"Conversations", func(r result, empty bool) bool {
+var Filters = []Filter{
+	{"All", func(Result, bool) bool { return true }},
+	{"Panes", func(r Result, _ bool) bool { return r.Named }},
+	{"Conversations", func(r Result, empty bool) bool {
 		return r.Pane.Conversation != nil && (empty || r.Matches() > 0)
 	}},
-	{"Screens", func(r result, empty bool) bool {
+	{"Screens", func(r Result, empty bool) bool {
 		return r.Pane.Conversation == nil && (empty || r.Matches() > 0)
 	}},
-	{"Actions", func(r result, _ bool) bool { return r.Action != nil }},
+	{"Actions", func(r Result, _ bool) bool { return r.Action != nil }},
 }
 
 const (
-	allTab     = 0
-	actionsTab = 4
+	AllTab     = 0
+	ActionsTab = 4
 )
 
 // search finds panes by name first, then by the words said in their
@@ -156,21 +123,21 @@ const (
 // words of the query must be in the same message or line. A pane where they only
 // occur inside other words comes after all the others. An empty query lists the
 // conversations that changed last, and then the other panes.
-func search(panes []pane, query string) []result {
-	words := strings.Fields(lowerRunes(query))
+func Search(panes []rex.Pane, query string) []Result {
+	words := strings.Fields(textutil.Lower(query))
 	if len(words) == 0 {
 		return listAll(panes)
 	}
-	var results []result
+	var results []Result
 	for _, p := range panes {
-		name := lowerRunes(p.SessionLabel + " " + p.WindowLabel + " " + p.Name + " " + shortHome(p.Cwd))
+		name := textutil.Lower(p.SessionLabel + " " + p.WindowLabel + " " + p.Name + " " + ShortHome(p.Cwd))
 		named := containsAll(name, words)
-		found := p.matches(words)
-		letters := lettersOf(clean(p.title()), words) // Positions in the name as drawn.
+		found := matchesOf(p, words)
+		letters := lettersOf(textutil.Clean(p.Title()), words) // Positions in the name as drawn.
 		if !named && len(found) == 0 && letters == nil {
 			continue
 		}
-		r := result{Pane: p, Reason: reasonName, Named: named, Found: found}
+		r := Result{Pane: p, Reason: reasonName, Named: named, Found: found}
 		strong := named && startsWords(name, words)
 		if !strong && len(found) > 0 && (found[0].Strong || !named) {
 			strong = found[0].Strong
@@ -189,12 +156,12 @@ func search(panes []pane, query string) []result {
 	return results
 }
 
-func listAll(panes []pane) []result {
-	results := make([]result, len(panes))
+func listAll(panes []rex.Pane) []Result {
+	results := make([]Result, len(panes))
 	for i, p := range panes {
-		results[i] = result{Pane: p, Reason: reasonName, Named: true}
-		if !p.active().IsZero() && !p.Here {
-			results[i].Reason, results[i].at = reasonRecent, p.active().UTC().Format(time.RFC3339Nano)
+		results[i] = Result{Pane: p, Reason: reasonName, Named: true}
+		if !p.Active().IsZero() && !p.Here {
+			results[i].Reason, results[i].at = reasonRecent, p.Active().UTC().Format(time.RFC3339Nano)
 		}
 	}
 	sort.SliceStable(results, func(i, j int) bool { return results[i].before(results[j]) })
@@ -207,34 +174,20 @@ func listAll(panes []pane) []result {
 	return results
 }
 
-// age is a short form of the time since a moment.
-func age(moment, now time.Time) string {
-	since := now.Sub(moment)
-	switch {
-	case since < time.Minute:
-		return "now"
-	case since < time.Hour:
-		return fmt.Sprintf("%dm", int(since.Minutes()))
-	case since < 24*time.Hour:
-		return fmt.Sprintf("%dh", int(since.Hours()))
-	}
-	return fmt.Sprintf("%dd", int(since.Hours()/24))
-}
-
 // matches returns the best first: those that are strong, and then the newest.
-func (p pane) matches(words []string) []match {
+func matchesOf(p rex.Pane, words []string) []Match {
 	if len(words) == 0 {
 		return nil
 	}
-	var strong, partial []match
+	var strong, partial []Match
 	for _, e := range p.Text {
-		if !containsAll(e.lower, words) {
+		if !containsAll(e.Lower, words) {
 			continue
 		}
-		if startsWords(e.lower, words) {
-			strong = append(strong, match{e, true})
+		if startsWords(e.Lower, words) {
+			strong = append(strong, Match{e, true})
 		} else {
-			partial = append(partial, match{e, false})
+			partial = append(partial, Match{e, false})
 		}
 	}
 	return append(strong, partial...)
@@ -247,7 +200,7 @@ func lettersOf(name string, words []string) []int {
 	if len(words) != 1 || len([]rune(words[0])) < 2 {
 		return nil
 	}
-	word, text := []rune(words[0]), []rune(lowerRunes(name))
+	word, text := []rune(words[0]), []rune(textutil.Lower(name))
 	for start := range text {
 		if text[start] != word[0] || start > 0 && (unicode.IsLetter(text[start-1]) || unicode.IsDigit(text[start-1])) {
 			continue
@@ -270,40 +223,6 @@ func lettersOf(name string, words []string) []int {
 	return nil
 }
 
-// title is the name of the pane. Rex can have none for it.
-func (p pane) title() string {
-	name := "pane"
-	for _, candidate := range []string{p.Name, p.WindowLabel, p.SessionLabel} {
-		if candidate != "" {
-			name = candidate
-			break
-		}
-	}
-	if p.Conversation != nil {
-		return name // A conversation has a name of its own.
-	}
-	// A shell is often just "shell", so where it is tells it from the others.
-	for _, place := range []string{p.WindowLabel, p.SessionLabel} {
-		if place != "" && place != name {
-			name = place + " · " + name
-		}
-	}
-	return name
-}
-
-var (
-	imageTag = regexp.MustCompile(`\[Image #\d+\]|</?pasted_content[^>]*>`)
-	heading  = regexp.MustCompile(`(^|\s)#{1,6}\s`)
-	markdown = strings.NewReplacer("**", "", "`", "")
-)
-
-// plain removes what a conversation's text has only for the terminal that draws it.
-func plain(text string) string {
-	text = imageTag.ReplaceAllString(text, "")
-	text = heading.ReplaceAllString(text, "$1")
-	return strings.Join(strings.Fields(markdown.Replace(text)), " ")
-}
-
 func containsAll(text string, words []string) bool {
 	for _, word := range words {
 		if !strings.Contains(text, word) {
@@ -311,26 +230,6 @@ func containsAll(text string, words []string) bool {
 		}
 	}
 	return true
-}
-
-// lowerRunes lowers each rune by itself, so the result has as many runes as the
-// input, and a position in one is the same position in the other.
-func lowerRunes(s string) string {
-	return strings.Map(unicode.ToLower, s)
-}
-
-// clean drops control characters, so a message cannot move the cursor or change
-// the terminal's colors.
-func clean(s string) string {
-	return strings.Map(func(r rune) rune {
-		// A joiner or a variation selector makes one emoji of several, and terminals
-		// disagree on its width. A line that is wider than counted wraps and breaks the
-		// whole picker, so the parts stay separate.
-		if unicode.IsControl(r) || r == '‍' || r == '️' {
-			return -1
-		}
-		return r
-	}, s)
 }
 
 func runesEqual(a, b []rune) bool {
@@ -372,9 +271,9 @@ func startsWords(lower string, words []string) bool {
 
 // around returns the part of text near the word. It starts at a whole word if
 // one starts between the limit and the match.
-func around(text, word string, before, length int) string {
+func Around(text, word string, before, length int) string {
 	runes := []rune(text)
-	at, _ := find([]rune(lowerRunes(text)), []rune(word))
+	at, _ := find([]rune(textutil.Lower(text)), []rune(word))
 	start := max(0, at-before)
 	if start > 0 {
 		for i := start; i < at; i++ {
@@ -396,8 +295,8 @@ func around(text, word string, before, length int) string {
 }
 
 // marks says for each rune of text if it is part of a word.
-func marks(text string, words []string) []bool {
-	lower := []rune(lowerRunes(text))
+func Marks(text string, words []string) []bool {
+	lower := []rune(textutil.Lower(text))
 	marked := make([]bool, len(lower))
 	for _, word := range words {
 		target := []rune(word)
@@ -412,29 +311,10 @@ func marks(text string, words []string) []bool {
 	return marked
 }
 
-func shortHome(path string) string {
+func ShortHome(path string) string {
 	home, err := os.UserHomeDir()
 	if err == nil && (path == home || strings.HasPrefix(path, home+"/")) {
 		return "~" + path[len(home):]
 	}
 	return path
-}
-
-// wrap splits text into lines at spaces. A word longer than a line is split.
-func wrap(text string, width int) []string {
-	return strings.Split(ansi.Wrap(text, width, ""), "\n")
-}
-
-// lastLines returns the end of text. A screen's newest text is at its end.
-func lastLines(text string, n int) []string {
-	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
-	return lines[max(0, len(lines)-n):]
-}
-
-func readLines(path string) []string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	return strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
 }

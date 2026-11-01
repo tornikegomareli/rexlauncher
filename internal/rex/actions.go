@@ -1,17 +1,12 @@
-package main
+package rex
 
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 )
 
-// maxActionsInAll keeps actions from pushing conversations out of view when a word,
-// such as "session", is in many titles. The Actions tab lists them all.
-const maxActionsInAll = 4
-
-// action is something Rex can do with one key, such as splitting a pane.
-type action struct {
+// Action is something Rex can do with one key, such as splitting a pane.
+type Action struct {
 	Name     string `json:"name"`
 	Title    string `json:"title"`
 	Category string `json:"category"`
@@ -35,10 +30,10 @@ var notListed = map[string]bool{
 	"client.update.accept":  true,
 }
 
-// loadActions lists what the client offers, then what the server offers. Without a
+// LoadActions lists what the client offers, then what the server offers. Without a
 // client, there are only the server's.
-func loadActions(client string) ([]action, error) {
-	var actions []action
+func LoadActions(client string) ([]Action, error) {
+	var actions []Action
 	if client != "" {
 		found, err := readActions("-C", client, "actions", "--json")
 		if err != nil {
@@ -53,18 +48,18 @@ func loadActions(client string) ([]action, error) {
 	return append(actions, found...), nil
 }
 
-func readActions(args ...string) ([]action, error) {
-	out, err := runRex(args...)
+func readActions(args ...string) ([]Action, error) {
+	out, err := Run(args...)
 	if err != nil {
 		return nil, err
 	}
 	var list struct {
-		Actions []action `json:"actions"`
+		Actions []Action `json:"actions"`
 	}
 	if err := json.Unmarshal(out, &list); err != nil {
 		return nil, fmt.Errorf("rex actions: %w", err)
 	}
-	var kept []action
+	var kept []Action
 	for _, a := range list.Actions {
 		if a.Title != "" && len(a.Args.Required) == 0 && !notListed[a.Name] {
 			kept = append(kept, a)
@@ -73,27 +68,9 @@ func readActions(args ...string) ([]action, error) {
 	return kept, nil
 }
 
-// searchActions returns the actions with the words in their titles, then those with
-// them in their keywords. An empty query returns them all.
-func searchActions(actions []action, query string) []result {
-	words := strings.Fields(lowerRunes(query))
-	var titled, other []result
-	for i := range actions {
-		a := &actions[i]
-		r := result{Action: a, Reason: reasonAction}
-		switch title := lowerRunes(a.Title); {
-		case containsAll(title, words):
-			titled = append(titled, r)
-		case containsAll(title+" "+lowerRunes(a.Keywords), words):
-			other = append(other, r)
-		}
-	}
-	return append(titled, other...)
-}
-
-// runAction runs an action on the pane behind the picker. The floating layer holds
+// RunAction runs an action on the pane behind the picker. The floating layer holds
 // the focus until the picker exits, so the pane gets it back first.
-func runAction(name, session, block, client string) error {
+func RunAction(name, session, block, client string) error {
 	var args []string
 	if client != "" {
 		args = append(args, "-C", client)
@@ -101,11 +78,11 @@ func runAction(name, session, block, client string) error {
 	args = append(args, "do", name)
 	if block != "" {
 		var ignored map[string]any
-		if err := callRex("session.focus_block", map[string]string{"session_id": session, "block_id": block}, &ignored); err != nil {
+		if err := Call("session.focus_block", map[string]string{"session_id": session, "block_id": block}, &ignored); err != nil {
 			return err
 		}
 		args = append(args, "-s", session, "-b", block)
 	}
-	_, err := runRex(args...)
+	_, err := Run(args...)
 	return err
 }

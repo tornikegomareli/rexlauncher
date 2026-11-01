@@ -1,4 +1,4 @@
-package main
+package picker
 
 import (
 	"fmt"
@@ -8,14 +8,32 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/tornikegomareli/rexlauncher/internal/conversations"
+	"github.com/tornikegomareli/rexlauncher/internal/rex"
+	"github.com/tornikegomareli/rexlauncher/internal/search"
+	"github.com/tornikegomareli/rexlauncher/internal/textutil"
 )
 
+func said(role, text string) conversations.Message {
+	return conversations.Message{Role: role, At: "t", Text: text}
+}
+
+// talking is a pane with a conversation.
+func talking(block, name string, messages ...conversations.Message) rex.Pane {
+	return rex.Pane{Block: block, Name: name, Conversation: &conversations.Conversation{}, Text: search.MessageEntries(messages)}
+}
+
+// showing is a pane with text on its screen.
+func showing(block, name string, text string) rex.Pane {
+	return rex.Pane{Block: block, Name: name, Text: search.ScreenEntries(text)}
+}
+
 // open returns a picker with its panes and text loaded.
-func open(t *testing.T, width, height int, panes ...pane) *model {
+func open(t *testing.T, width, height int, panes ...rex.Pane) *model {
 	t.Helper()
 	m := &model{
-		loadText: func(p []pane) []pane { return p },
-		capture: func(p pane) (string, error) {
+		loadText: func(p []rex.Pane) []rex.Pane { return p },
+		capture: func(p rex.Pane) (string, error) {
 			return "screen of " + p.Block + "\n", nil
 		},
 	}
@@ -63,14 +81,14 @@ func view(m *model) string {
 	return ansi.Strip(m.View())
 }
 
-func demoPanes(t *testing.T) []pane {
+func demoPanes(t *testing.T) []rex.Pane {
 	t.Helper()
-	first := talking(t, "talk", "drooop-demos", said("user", "our panes project"), said("assistant", "the panes draw well"))
+	first := talking("talk", "drooop-demos", said("user", "our panes project"), said("assistant", "the panes draw well"))
 	first.SessionLabel, first.Cwd = "work", "/code/drooop"
 	second := showing("shell", "build", "split panes in the log")
 	second.SessionLabel, second.Cwd = "ops", "/code/ops"
-	third := pane{Block: "named", Name: "panes-app", SessionLabel: "apps", Cwd: "/code/app"}
-	return []pane{first, second, third}
+	third := rex.Pane{Block: "named", Name: "panes-app", SessionLabel: "apps", Cwd: "/code/app"}
+	return []rex.Pane{first, second, third}
 }
 
 func TestEveryLineFitsTheWindow(t *testing.T) {
@@ -78,7 +96,7 @@ func TestEveryLineFitsTheWindow(t *testing.T) {
 	long.Cwd = "/" + strings.Repeat("folder/", 40)
 	for _, width := range []int{20, 40, 71, 72, 100, 200} {
 		for _, height := range []int{3, 6, 30} {
-			m := open(t, width, height, long, pane{Block: "c", Name: "გამარჯობა მსოფლიო"})
+			m := open(t, width, height, long, rex.Pane{Block: "c", Name: "გამარჯობა მსოფლიო"})
 			typeText(m, "word")
 			lines := strings.Split(view(m), "\n")
 			if len(lines) > max(height, 7) {
@@ -186,8 +204,8 @@ func TestTabChangesTheFilter(t *testing.T) {
 		"Conversations": {"talk"},
 		"Screens":       {"shell"},
 	}
-	for _, f := range filters {
-		filter := f.name
+	for _, f := range search.Filters {
+		filter := f.Name
 		var got []string
 		for _, r := range m.visible() {
 			got = append(got, r.Pane.Block)
@@ -201,8 +219,8 @@ func TestTabChangesTheFilter(t *testing.T) {
 		t.Fatalf("filter %d after a full turn", m.filter)
 	}
 	press(m, tea.KeyShiftTab)
-	if filters[m.filter].name != "Actions" {
-		t.Fatalf("filter %s", filters[m.filter].name)
+	if search.Filters[m.filter].Name != "Actions" {
+		t.Fatalf("filter %s", search.Filters[m.filter].Name)
 	}
 }
 
@@ -271,9 +289,9 @@ func TestEditingTheQuery(t *testing.T) {
 }
 
 func TestTheSelectionStaysInViewWithItsHeading(t *testing.T) {
-	var panes []pane
+	var panes []rex.Pane
 	for i := range 40 {
-		panes = append(panes, pane{Block: fmt.Sprint(i), Name: fmt.Sprintf("pane-%d", i)})
+		panes = append(panes, rex.Pane{Block: fmt.Sprint(i), Name: fmt.Sprintf("pane-%d", i)})
 	}
 	m := open(t, 120, 12, panes...)
 	for range 30 {
@@ -294,10 +312,10 @@ func TestTheSelectionStaysInViewWithItsHeading(t *testing.T) {
 }
 
 func TestTextLoadedLaterKeepsTheSelection(t *testing.T) {
-	panes := []pane{{Block: "a", Name: "one"}, {Block: "b", Name: "two"}}
+	panes := []rex.Pane{{Block: "a", Name: "one"}, {Block: "b", Name: "two"}}
 	m := &model{
-		loadText: func(p []pane) []pane { return nil },
-		capture:  func(p pane) (string, error) { return "", nil },
+		loadText: func(p []rex.Pane) []rex.Pane { return nil },
+		capture:  func(p rex.Pane) (string, error) { return "", nil },
 	}
 	m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	m.Update(panesMsg{panes: panes})
@@ -336,7 +354,7 @@ func TestAScreenReadOfAnotherPaneReadsTheSelectedOneNext(t *testing.T) {
 }
 
 func TestLettersAreMarkedInTheNameAsDrawn(t *testing.T) {
-	m := open(t, 120, 30, pane{Block: "a", Name: "\x07\x07tilebar", SessionLabel: "s"})
+	m := open(t, 120, 30, rex.Pane{Block: "a", Name: "\x07\x07tilebar", SessionLabel: "s"})
 	typeText(m, "tlbr")
 	out := m.View()
 	for _, want := range []string{styleHit + "mt", styleHit + "ml", styleHit + "mb", styleHit + "mr"} {
@@ -347,7 +365,7 @@ func TestLettersAreMarkedInTheNameAsDrawn(t *testing.T) {
 }
 
 func TestALetterLeftOutMarksTheOthers(t *testing.T) {
-	m := open(t, 120, 30, pane{Block: "a", Name: "tilebar", SessionLabel: "s"})
+	m := open(t, 120, 30, rex.Pane{Block: "a", Name: "tilebar", SessionLabel: "s"})
 	typeText(m, "tlbr")
 	out := m.View()
 	for _, want := range []string{styleHit + "mt", styleHit + "ml", styleHit + "mb", styleHit + "mr"} {
@@ -358,8 +376,8 @@ func TestALetterLeftOutMarksTheOthers(t *testing.T) {
 }
 
 func TestPreviewKeepsTheColorsOfTheScreenAndNothingElse(t *testing.T) {
-	m := open(t, 120, 30, pane{Block: "a", Name: "x"})
-	send(m, captureMsg{block: "a", text: screenText("\x1b[31mred\x1b[0m \x1b[3Cgap\x1b[2J\x1b]0;title\x07\n")})
+	m := open(t, 120, 30, rex.Pane{Block: "a", Name: "x"})
+	send(m, captureMsg{block: "a", text: rex.ScreenText("\x1b[31mred\x1b[0m \x1b[3Cgap\x1b[2J\x1b]0;title\x07\n")})
 	out := m.View()
 	if !strings.Contains(out, "\x1b[31mred") {
 		t.Fatalf("no color in %q", out)
@@ -376,8 +394,8 @@ func TestPreviewKeepsTheColorsOfTheScreenAndNothingElse(t *testing.T) {
 
 func TestAColorOfTheScreenStaysInsideThePreview(t *testing.T) {
 	long := "\x1b[31m" + strings.Repeat("x", 300) + "\n"
-	m := open(t, 120, 30, pane{Block: "a", Name: "x"})
-	send(m, captureMsg{block: "a", text: screenText(long)})
+	m := open(t, 120, 30, rex.Pane{Block: "a", Name: "x"})
+	send(m, captureMsg{block: "a", text: rex.ScreenText(long)})
 	for _, line := range strings.Split(m.View(), "\n") {
 		if strings.Contains(line, "xxx") && !strings.HasSuffix(line, "\x1b[0m") {
 			t.Fatalf("no reset at the end of %q", line)
@@ -388,25 +406,17 @@ func TestAColorOfTheScreenStaysInsideThePreview(t *testing.T) {
 	}
 }
 
-func TestScreenText(t *testing.T) {
-	got := screenText("\x1b[31mone\ntwo\x1b[0m\nthree\r\n")
-	want := "\x1b[31mone\x1b[0m\n\x1b[31mtwo\x1b[0m\x1b[0m\nthree\x1b[0m\n"
-	if got != want {
-		t.Fatalf("got %q, want %q", got, want)
-	}
-}
-
 func TestThePreviewReadsTheScreenAgainOnTheTimer(t *testing.T) {
 	reads := 0
 	m := &model{
-		loadText: func(p []pane) []pane { return p },
-		capture: func(p pane) (string, error) {
+		loadText: func(p []rex.Pane) []rex.Pane { return p },
+		capture: func(p rex.Pane) (string, error) {
 			reads++
 			return fmt.Sprintf("read %d", reads), nil
 		},
 	}
 	send(m, tea.WindowSizeMsg{Width: 120, Height: 30})
-	send(m, panesMsg{panes: []pane{{Block: "a", Name: "x"}}})
+	send(m, panesMsg{panes: []rex.Pane{{Block: "a", Name: "x"}}})
 	before := reads
 	send(m, tickMsg{})
 	if reads != before+1 || !strings.Contains(view(m), fmt.Sprintf("read %d", reads)) {
@@ -465,8 +475,8 @@ func TestClickingAFilterChoosesIt(t *testing.T) {
 	m := open(t, 120, 30, demoPanes(t)...)
 	line := strings.Split(view(m), "\n")[2]
 	click(m, strings.Index(line, "Screens"), 2)
-	if filters[m.filter].name != "Screens" {
-		t.Fatalf("filter %s", filters[m.filter].name)
+	if search.Filters[m.filter].Name != "Screens" {
+		t.Fatalf("filter %s", search.Filters[m.filter].Name)
 	}
 }
 
@@ -474,12 +484,12 @@ func TestClickingAFilterChoosesIt(t *testing.T) {
 func TestEveryLetterOfATabChoosesIt(t *testing.T) {
 	m := open(t, 120, 30, demoPanes(t)...)
 	line := strings.Split(view(m), "\n")[tabsRow]
-	for i, f := range filters {
-		at := strings.Index(line, f.name)
-		for x := at; x < at+len(f.name); x++ {
+	for i, f := range search.Filters {
+		at := strings.Index(line, f.Name)
+		for x := at; x < at+len(f.Name); x++ {
 			click(m, x, tabsRow)
 			if m.filter != i {
-				t.Fatalf("%s at %d chose %s", f.name, x, filters[m.filter].name)
+				t.Fatalf("%s at %d chose %s", f.Name, x, search.Filters[m.filter].Name)
 			}
 		}
 	}
@@ -520,11 +530,11 @@ func previewText(m *model) string {
 }
 
 func TestTheWheelScrollsTheMatchesInThePreview(t *testing.T) {
-	var lines []string
+	var lines []conversations.Message
 	for i := range 12 {
 		lines = append(lines, said("user", fmt.Sprintf("word number %d", i)))
 	}
-	m := open(t, 120, 30, talking(t, "a", "x", lines...))
+	m := open(t, 120, 30, talking("a", "x", lines...))
 	typeText(m, "word")
 	if !strings.Contains(previewText(m), "word number 11") {
 		t.Fatalf("got\n%s", view(m))
@@ -556,7 +566,7 @@ func TestALiveScreenDoesNotScroll(t *testing.T) {
 }
 
 func TestAnEmptyQueryShowsWhatEachConversationSaidLast(t *testing.T) {
-	p := talking(t, "a", "x", said("user", "first"), said("assistant", "the last message"))
+	p := talking("a", "x", said("user", "first"), said("assistant", "the last message"))
 	p.Conversation.Active, p.Cwd = time.Now().Add(-5*time.Minute), "/code/x"
 	m := open(t, 120, 30, p)
 	out := view(m)
@@ -590,9 +600,9 @@ func TestTypedWordsAreNotKeys(t *testing.T) {
 
 // A tab's name is only a label: what it keeps must not depend on it.
 func TestRenamingATabKeepsWhatItShows(t *testing.T) {
-	name := filters[1].name
-	filters[1].name = "Terminals"
-	defer func() { filters[1].name = name }()
+	name := search.Filters[1].Name
+	search.Filters[1].Name = "Terminals"
+	defer func() { search.Filters[1].Name = name }()
 	m := open(t, 120, 30, demoPanes(t)...)
 	typeText(m, "panes")
 	press(m, tea.KeyTab)
@@ -601,58 +611,18 @@ func TestRenamingATabKeepsWhatItShows(t *testing.T) {
 	}
 }
 
-func TestScreenTextDropsEverySequenceItDoesNotKeep(t *testing.T) {
-	for _, c := range []struct{ name, input, want string }{
-		{"a character set", "\x1b(Bplain\n", "plain"},
-		{"a private mode", "\x1b[>4;2mplain\n", "plain"},
-		{"a title ended by ST", "\x1b]0;title\x1b\\plain\n", "plain"},
-		{"a link", "\x1b]8;;http://x\x1b\\text\x1b]8;;\x1b\\\n", "text"},
-	} {
-		if got := ansi.Strip(screenText(c.input)); strings.TrimRight(got, "\n") != c.want {
-			t.Errorf("%s: got %q", c.name, got)
-		}
-	}
-	if got := screenText("one\x1b\ntwo\n"); !strings.Contains(got, "one") || strings.Count(got, "\n") != 2 {
-		t.Errorf("an escape at the end of a line joined two lines: %q", got)
-	}
-}
-
-// Lines that only use partial resets never end a color. Reading them must stay cheap,
-// because the preview reads the screen again every 600 ms.
-func TestScreenTextCarriesABoundedAmountOfColor(t *testing.T) {
-	got := screenText(strings.Repeat("\x1b[39mline\x1b[22m\n", 8000))
-	if len(got) > 8000*(maxCarriedColor+64) {
-		t.Fatalf("%d bytes from 8000 short lines", len(got))
-	}
-}
-
 func TestALabelIsDrawnOnceBeforeALongWord(t *testing.T) {
 	long := "/a/very/long/path/that/fills/a/whole/line/of/the/preview/and/more"
-	m := open(t, 100, 30, talking(t, "a", "x", said("user", long+" word")))
+	m := open(t, 100, 30, talking("a", "x", said("user", long+" word")))
 	typeText(m, "word")
 	if got := strings.Count(previewText(m), "you:"); got != 1 {
 		t.Fatalf("%d labels in\n%s", got, previewText(m))
 	}
 }
 
-func TestAScreenCannotAskForAnyAmountOfMemory(t *testing.T) {
-	for _, count := range []string{"200000000", "4611686018427387904"} {
-		if got := screenText("\x1b[" + count + "Cx\n"); len(got) > 2*maxCursorMove {
-			t.Errorf("%s: %d bytes", count, len(got))
-		}
-	}
-}
-
-func TestAVeryLongColorIsNotPrintedAsText(t *testing.T) {
-	got := screenText("\x1b[" + strings.Repeat("1;", 400) + "1mone\ntwo\n")
-	if strings.Contains(ansi.Strip(got), ";") {
-		t.Fatalf("got %q", ansi.Strip(got))
-	}
-}
-
 func TestAnErrorInThePreviewCannotMoveTheCursor(t *testing.T) {
-	m := open(t, 120, 30, pane{Block: "a", Name: "x"})
-	m.capture = func(pane) (string, error) { return "", fmt.Errorf("failed\x1b[2J") }
+	m := open(t, 120, 30, rex.Pane{Block: "a", Name: "x"})
+	m.capture = func(rex.Pane) (string, error) { return "", fmt.Errorf("failed\x1b[2J") }
 	m.capturing = false
 	send(m, tickMsg{})
 	if strings.Contains(m.View(), "\x1b[2J") {
@@ -661,9 +631,9 @@ func TestAnErrorInThePreviewCannotMoveTheCursor(t *testing.T) {
 }
 
 func TestAGrownWindowShowsTheWholeList(t *testing.T) {
-	var panes []pane
+	var panes []rex.Pane
 	for i := range 20 {
-		panes = append(panes, pane{Block: fmt.Sprint(i), Name: fmt.Sprintf("pane-%d", i)})
+		panes = append(panes, rex.Pane{Block: fmt.Sprint(i), Name: fmt.Sprintf("pane-%d", i)})
 	}
 	m := open(t, 120, 12, panes...)
 	press(m, tea.KeyEnd)
@@ -674,7 +644,7 @@ func TestAGrownWindowShowsTheWholeList(t *testing.T) {
 }
 
 func TestARowOfAShellNamesItsSession(t *testing.T) {
-	m := open(t, 120, 30, pane{Block: "a", Name: "shell", SessionLabel: "infra"}, pane{Block: "b", Name: "shell", SessionLabel: "logs"})
+	m := open(t, 120, 30, rex.Pane{Block: "a", Name: "shell", SessionLabel: "infra"}, rex.Pane{Block: "b", Name: "shell", SessionLabel: "logs"})
 	out := view(m)
 	if !strings.Contains(out, "infra · shell") || !strings.Contains(out, "logs · shell") {
 		t.Fatalf("got\n%s", out)
@@ -682,9 +652,9 @@ func TestARowOfAShellNamesItsSession(t *testing.T) {
 }
 
 func TestAConversationKeepsItsOwnName(t *testing.T) {
-	p := talking(t, "a", "Fix the lock", said("user", "hello"))
+	p := talking("a", "Fix the lock", said("user", "hello"))
 	p.SessionLabel = "checkout"
-	if got := p.title(); got != "Fix the lock" {
+	if got := p.Title(); got != "Fix the lock" {
 		t.Fatalf("got %q", got)
 	}
 }
@@ -698,7 +668,7 @@ func TestPastedLinesStaySeparateWords(t *testing.T) {
 }
 
 func TestWordsInDifferentMessagesExplainTheEmptyList(t *testing.T) {
-	m := open(t, 120, 30, talking(t, "a", "x", said("user", "one"), said("user", "two")))
+	m := open(t, 120, 30, talking("a", "x", said("user", "one"), said("user", "two")))
 	typeText(m, "one two")
 	if out := view(m); !strings.Contains(out, "in one message or line") {
 		t.Fatalf("got\n%s", out)
@@ -714,29 +684,197 @@ func TestANarrowFooterDropsThePosition(t *testing.T) {
 }
 
 func TestARowSaysWhatItsNumberCounts(t *testing.T) {
-	m := open(t, 120, 30, talking(t, "a", "x", said("user", "word one"), said("user", "word two")))
+	m := open(t, 120, 30, talking("a", "x", said("user", "word one"), said("user", "word two")))
 	typeText(m, "word")
 	if out := view(m); !strings.Contains(out, "2 matches") {
 		t.Fatalf("got\n%s", out)
 	}
 }
 
-func TestAJoinedEmojiCannotChangeTheWidthOfALine(t *testing.T) {
-	for _, text := range []string{"👨‍👩‍👧 family", "🏳️‍🌈 flag"} {
-		if got := clean(text); strings.ContainsAny(got, "‍️") {
-			t.Errorf("%q kept a joiner: %q", text, got)
-		}
-		if got := screenText(text + "\n"); strings.ContainsAny(got, "‍️") {
-			t.Errorf("%q kept a joiner on a screen: %q", text, got)
-		}
-	}
-}
-
 func TestARowOfAShellNamesItsWindow(t *testing.T) {
-	p := pane{Block: "a", Name: "shell", SessionLabel: "svc", WindowLabel: "api"}
+	p := rex.Pane{Block: "a", Name: "shell", SessionLabel: "svc", WindowLabel: "api"}
 	m := open(t, 120, 30, p)
 	out := view(m)
 	if !strings.Contains(out, "svc · api · shell") || !strings.Contains(out, "Window   api") {
 		t.Fatalf("got\n%s", out)
 	}
 }
+
+func TestWrap(t *testing.T) {
+	if got := strings.Join(wrap("one two three", 7), "|"); got != "one two|three" {
+		t.Fatalf("got %q", got)
+	}
+	if got := strings.Join(wrap("abcdefgh", 3), "|"); got != "abc|def|gh" {
+		t.Fatalf("a long word: %q", got)
+	}
+	if got := strings.Join(wrap("ა ბ გ", 3), "|"); got != "ა ბ|გ" {
+		t.Fatalf("multi-byte text: %q", got)
+	}
+}
+
+func TestLastLines(t *testing.T) {
+	if got := strings.Join(lastLines("a\nb\nc\n", 2), "|"); got != "b|c" {
+		t.Fatalf("got %q", got)
+	}
+	if got := strings.Join(lastLines("a\n", 5), "|"); got != "a" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestAge(t *testing.T) {
+	now := time.Now()
+	for _, c := range []struct {
+		ago  time.Duration
+		want string
+	}{{time.Second, "now"}, {5 * time.Minute, "5m"}, {3 * time.Hour, "3h"}, {50 * time.Hour, "2d"}} {
+		if got := age(now.Add(-c.ago), now); got != c.want {
+			t.Errorf("%v: got %q", c.ago, got)
+		}
+	}
+}
+
+func actionNames(results []search.Result) []string {
+	var names []string
+	for _, r := range results {
+		if r.Action != nil {
+			names = append(names, r.Action.Name)
+		}
+	}
+	return names
+}
+
+var someActions = []rex.Action{
+	{Name: "pane.split.down", Title: "Split Pane Down", Keywords: "pane split terminal divide", Category: "Pane"},
+	{Name: "pane.split.right", Title: "Split Pane Right", Keywords: "pane split terminal divide", Category: "Pane"},
+	{Name: "client.theme.change", Title: "Change Theme…", Keywords: "theme colour color scheme", Category: "View"},
+	{Name: "client.sidebar.toggle", Title: "Toggle Sidebar", Keywords: "terminal", Category: "View"},
+}
+
+// showTab moves to a tab the way a key does, and arranges the screen.
+func showTab(m *model, tab int) {
+	m.setFilter(tab)
+	m.arrange()
+}
+
+func withActions(m *model, actions ...rex.Action) *model {
+	send(m, actionsMsg{actions: actions})
+	return m
+}
+
+func TestActionsComeAfterPanesAndBeforeConversations(t *testing.T) {
+	m := withActions(open(t, 120, 30,
+		rex.Pane{Block: "named", Session: "s", SessionLabel: "split-work", Name: "shell"},
+		rex.Pane{Block: "said", Session: "s", SessionLabel: "x", Name: "agent", Conversation: &conversations.Conversation{}, Text: []textutil.Entry{{Text: "split the module", Lower: "split the module"}}},
+	), someActions...)
+	send(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("split")})
+	var order []string
+	for _, r := range m.visible() {
+		order = append(order, r.Heading())
+	}
+	want := "Panes Actions Actions Conversations"
+	if got := strings.Join(order, " "); got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestAnEmptyQueryShowsActionsOnlyInTheirTab(t *testing.T) {
+	m := withActions(open(t, 120, 30, rex.Pane{Block: "b", Session: "s", Name: "shell"}), someActions...)
+	if got := actionNames(m.visible()); got != nil {
+		t.Fatalf("All tab: %q", got)
+	}
+	showTab(m, search.ActionsTab)
+	if got := actionNames(m.visible()); len(got) != len(someActions) {
+		t.Fatalf("Actions tab: %q", got)
+	}
+}
+
+func TestOtherTabsHaveNoActions(t *testing.T) {
+	m := withActions(open(t, 120, 30, rex.Pane{Block: "b", Session: "s", Name: "shell"}), someActions...)
+	for tab := range search.Filters {
+		if tab == search.ActionsTab {
+			continue
+		}
+		showTab(m, tab)
+		if tab != 0 {
+			send(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s")})
+		}
+		if got := actionNames(m.visible()); tab != 0 && got != nil {
+			t.Errorf("%s: %q", search.Filters[tab].Name, got)
+		}
+		m.query, m.cursor = nil, 0
+		m.refresh(false)
+	}
+}
+
+func TestTheAllTabLimitsActions(t *testing.T) {
+	var many []rex.Action
+	for _, name := range strings.Fields("a b c d e f g h") {
+		many = append(many, rex.Action{Name: name, Title: "Session " + name})
+	}
+	m := withActions(open(t, 120, 30, rex.Pane{Block: "b", Session: "s", Name: "shell"}), many...)
+	send(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("session")})
+	if got := actionNames(m.visible()); len(got) != search.MaxActionsInAll {
+		t.Fatalf("All tab: %q", got)
+	}
+	showTab(m, search.ActionsTab)
+	if got := actionNames(m.visible()); len(got) != len(many) {
+		t.Fatalf("Actions tab: %q", got)
+	}
+}
+
+func TestEnterChoosesTheActionAndNoPane(t *testing.T) {
+	m := withActions(open(t, 120, 30, rex.Pane{Block: "b", Session: "s", Name: "shell"}), someActions...)
+	send(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("theme")})
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil || m.chosen != nil || m.chosenAction == nil || m.chosenAction.Name != "client.theme.change" {
+		t.Fatalf("pane %+v, action %+v", m.chosen, m.chosenAction)
+	}
+}
+
+func TestTheSelectedActionStaysWhenTextArrives(t *testing.T) {
+	m := withActions(open(t, 120, 30, rex.Pane{Block: "b", Session: "s", Name: "shell"}), someActions...)
+	showTab(m, search.ActionsTab)
+	send(m, tea.KeyMsg{Type: tea.KeyDown})
+	send(m, textMsg{panes: m.panes})
+	if r, ok := m.current(); !ok || r.Action == nil || r.Action.Name != "pane.split.right" {
+		t.Fatalf("selected %+v", r)
+	}
+}
+
+func TestPaneSelectionIsNotMovedByActionRows(t *testing.T) {
+	m := withActions(open(t, 120, 30, rex.Pane{Block: "b", Session: "s", Name: "shell"}), someActions...)
+	send(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("split")})
+	if m.selected != 0 {
+		t.Fatalf("selected %d", m.selected)
+	}
+}
+
+func TestAnActionRowDrawsAndNeedsNoScreen(t *testing.T) {
+	asked := 0
+	m := withActions(open(t, 120, 30, rex.Pane{Block: "b", Session: "s", Name: "shell"}), someActions...)
+	m.capture = func(rex.Pane) (string, error) { asked++; return "", nil }
+	showTab(m, search.ActionsTab)
+	send(m, tea.KeyMsg{Type: tea.KeyDown})
+	view := m.View()
+	for _, want := range []string{"Split Pane Right", "pane.split.right", "Run action"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("no %q in:\n%s", want, view)
+		}
+	}
+	if asked != 0 {
+		t.Errorf("read a screen %d times for an action", asked)
+	}
+}
+
+func TestAnActionsErrorIsShownInItsTab(t *testing.T) {
+	m := open(t, 120, 30, rex.Pane{Block: "b", Session: "s", Name: "shell"})
+	send(m, actionsMsg{err: errString("rex actions: no such client")})
+	showTab(m, search.ActionsTab)
+	if view := m.View(); !strings.Contains(view, "no such client") {
+		t.Fatalf("no error in:\n%s", view)
+	}
+}
+
+type errString string
+
+func (e errString) Error() string { return string(e) }

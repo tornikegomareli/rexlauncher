@@ -1,4 +1,11 @@
-package main
+// Package conversations is everything rexlauncher knows about Claude Code: which
+// sessions are live, where they run, and how to read what was said in them.
+//
+// A Claude Code transcript is mostly tool output and copies of API requests: of
+// 2.3 GB measured on a real machine, 6.7 MB was text that people read. So the
+// picker searches an index with only that text, and each open only reads what
+// the transcript added since the last open.
+package conversations
 
 import (
 	"bufio"
@@ -13,6 +20,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/tornikegomareli/rexlauncher/internal/parallel"
 )
 
 // This file is everything rexlauncher knows about Claude Code: which sessions are
@@ -34,20 +43,20 @@ const tmpPrefix = ".writing-"
 // what a person typed, which can start with a tag too.
 var wrappedByClaudeCode = regexp.MustCompile(`^<(task-notification|system-reminder|user-prompt-submit-hook|command-[a-z-]+|local-command-[a-z-]+|bash-[a-z-]+)\b`)
 
-type message struct {
+type Message struct {
 	Role string
 	At   string
 	Text string
 }
 
-func (m message) line() string {
+func (m Message) line() string {
 	return m.Role + "\t" + m.At + "\t" + flatten(m.Text) + "\n"
 }
 
-func parseMessage(line string) message {
+func parseMessage(line string) Message {
 	role, rest, _ := strings.Cut(line, "\t")
 	at, text, _ := strings.Cut(rest, "\t")
-	return message{Role: role, At: at, Text: text}
+	return Message{Role: role, At: at, Text: text}
 }
 
 // flatten keeps a message on one line.
@@ -60,10 +69,10 @@ func flatten(s string) string {
 // extractMessage returns the text a person reads in one transcript line. Tool
 // calls, tool output and thinking are left out, and so are Claude Code's own
 // messages: those it marks, and those it wraps in a tag such as <command-name>.
-func extractMessage(line []byte) (message, bool) {
+func extractMessage(line []byte) (Message, bool) {
 	// Most bytes are in lines of other types, so do not decode those.
 	if !bytes.Contains(line, []byte(`"type":"user"`)) && !bytes.Contains(line, []byte(`"type":"assistant"`)) {
-		return message{}, false
+		return Message{}, false
 	}
 	var entry struct {
 		Type             string `json:"type"`
@@ -76,13 +85,13 @@ func extractMessage(line []byte) (message, bool) {
 		} `json:"message"`
 	}
 	if err := json.Unmarshal(line, &entry); err != nil {
-		return message{}, false
+		return Message{}, false
 	}
 	if entry.Type != "user" && entry.Type != "assistant" {
-		return message{}, false
+		return Message{}, false
 	}
 	if entry.IsMeta || entry.IsSidechain || entry.IsCompactSummary {
-		return message{}, false
+		return Message{}, false
 	}
 	var parts []string
 	var whole string
@@ -94,7 +103,7 @@ func extractMessage(line []byte) (message, bool) {
 			Text string `json:"text"`
 		}
 		if json.Unmarshal(entry.Message.Content, &blocks) != nil {
-			return message{}, false
+			return Message{}, false
 		}
 		for _, block := range blocks {
 			if block.Type == "text" {
@@ -104,9 +113,9 @@ func extractMessage(line []byte) (message, bool) {
 	}
 	text := strings.TrimSpace(strings.Join(parts, "\n"))
 	if text == "" || (entry.Type == "user" && wrappedByClaudeCode.MatchString(text)) {
-		return message{}, false
+		return Message{}, false
 	}
-	return message{Role: entry.Type, At: entry.Timestamp, Text: text}, true
+	return Message{Role: entry.Type, At: entry.Timestamp, Text: text}, true
 }
 
 // updateIndex brings the index of one conversation up to date and returns its path.
@@ -163,7 +172,7 @@ func updateIndex(dir, id, transcript string) (string, error) {
 		}
 	}
 	now := time.Now()
-	os.Chtimes(path, now, now) // Keeps it from pruneIndex while it is in use.
+	os.Chtimes(path, now, now) // Keeps it from Prune while it is in use.
 	return path, writeFileAtomic(offsetPath, fmt.Appendf(nil, "%d %d", offset, index.Len()))
 }
 
@@ -196,8 +205,8 @@ func readOffset(path string) (offset, size int64) {
 	return offset, size
 }
 
-// pruneIndex deletes the indexes of conversations not used for indexMaxAge.
-func pruneIndex(dir string) {
+// Prune deletes the indexes of conversations not used for indexMaxAge.
+func Prune(dir string) {
 	// What a process that was ended left behind. Another picker can be writing, so
 	// only old ones go.
 	temporary, _ := filepath.Glob(filepath.Join(dir, tmpPrefix+"*"))
@@ -217,8 +226,8 @@ func pruneIndex(dir string) {
 	}
 }
 
-// conversation is a live Claude Code session.
-type conversation struct {
+// Conversation is a live Claude Code session.
+type Conversation struct {
 	ID         string
 	Name       string
 	Transcript string
@@ -227,14 +236,14 @@ type conversation struct {
 
 var rexBlockVariable = regexp.MustCompile(`\bREX_BLOCK=(block:[0-9a-f-]+)`)
 
-// findConversations returns the live Claude Code sessions by the Rex block they
+// Find returns the live Claude Code sessions by the Rex block they
 // run in. Each one has a file named after its process, and the process's
 // environment names its block.
-func findConversations(claudeDir string) map[string]conversation {
+func Find(claudeDir string) map[string]Conversation {
 	files, _ := filepath.Glob(filepath.Join(claudeDir, "sessions", "*.json"))
 	blocks := make([]string, len(files))
-	found := make([]conversation, len(files))
-	forEach(len(files), func(i int) {
+	found := make([]Conversation, len(files))
+	parallel.ForEach(len(files), func(i int) {
 		data, err := os.ReadFile(files[i])
 		if err != nil {
 			return
@@ -265,12 +274,12 @@ func findConversations(claudeDir string) map[string]conversation {
 			return
 		}
 		blocks[i] = string(match[1])
-		found[i] = conversation{ID: session.SessionID, Name: session.Name, Transcript: transcripts[0]}
+		found[i] = Conversation{ID: session.SessionID, Name: session.Name, Transcript: transcripts[0]}
 		if info, err := os.Stat(transcripts[0]); err == nil {
 			found[i].Active = info.ModTime()
 		}
 	})
-	conversations := map[string]conversation{}
+	conversations := map[string]Conversation{}
 	for i, block := range blocks {
 		// A pane can hold two, such as a session stopped with ctrl+z and a new one.
 		if block != "" && found[i].Active.After(conversations[block].Active) {
@@ -280,7 +289,7 @@ func findConversations(claudeDir string) map[string]conversation {
 	return conversations
 }
 
-func claudeDir() string {
+func ClaudeDir() string {
 	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
 		return dir
 	}
@@ -288,16 +297,25 @@ func claudeDir() string {
 	return filepath.Join(home, ".claude")
 }
 
-// entries is what was said in the conversation, the newest first.
-func (c conversation) entries(index string) ([]entry, error) {
+// Messages is what was said in the conversation, the oldest first.
+func (c Conversation) Messages(index string) ([]Message, error) {
 	path, err := updateIndex(index, c.ID, c.Transcript)
 	if err != nil {
 		return nil, err
 	}
-	return messageEntries(path), nil
+	return readMessages(path), nil
 }
 
-func cacheDir() (string, error) {
+// readMessages reads an index.
+func readMessages(path string) []Message {
+	var messages []Message
+	for _, line := range readLines(path) {
+		messages = append(messages, parseMessage(line))
+	}
+	return messages
+}
+
+func CacheDir() (string, error) {
 	base, err := os.UserCacheDir()
 	if err != nil {
 		return "", err
@@ -306,24 +324,10 @@ func cacheDir() (string, error) {
 	return dir, os.MkdirAll(dir, 0o700)
 }
 
-// messageEntries reads an index, the newest message first. Identical messages
-// count once.
-func messageEntries(path string) []entry {
-	lines := readLines(path)
-	seen := map[string]bool{}
-	var entries []entry
-	for i := len(lines) - 1; i >= 0; i-- {
-		message := parseMessage(lines[i])
-		text := clean(plain(message.Text))
-		if text == "" || seen[text] {
-			continue
-		}
-		seen[text] = true
-		e := entry{Text: text, lower: lowerRunes(text), At: message.At}
-		if message.Role == "user" {
-			e.Label = "you: "
-		}
-		entries = append(entries, e)
+func readLines(path string) []string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
 	}
-	return entries
+	return strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
 }

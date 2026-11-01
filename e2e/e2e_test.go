@@ -1,6 +1,6 @@
 //go:build e2e
 
-package main
+package e2e
 
 import (
 	"encoding/json"
@@ -12,7 +12,38 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/tornikegomareli/rexlauncher/internal/rex"
+	"github.com/tornikegomareli/rexlauncher/internal/search"
 )
+
+const stayAliveVariable = "REXLAUNCHER_TEST_STAY_ALIVE"
+
+func userLine(text string) string {
+	return `{"type":"user","timestamp":"t","message":{"content":"` + text + `"}}` + "\n"
+}
+
+func appendTo(t *testing.T, path, text string) {
+	t.Helper()
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(text); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// kinds names each row by its section, and its pane.
+func kinds(results []search.Result) []string {
+	names := map[string]string{"Recent conversations": "recent", "Panes": "pane", "Conversations": "said", "Screens": "screen"}
+	var out []string
+	for _, r := range results {
+		out = append(out, names[r.Heading()]+":"+r.Pane.Block)
+	}
+	return out
+}
 
 func TestMain(m *testing.M) {
 	if os.Getenv(stayAliveVariable) != "" {
@@ -59,7 +90,7 @@ func server(t *testing.T) {
 
 	deadline := time.Now().Add(20 * time.Second)
 	for {
-		if _, err := runRex("ls"); err == nil {
+		if _, err := rex.Run("ls"); err == nil {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -72,7 +103,7 @@ func server(t *testing.T) {
 			Path string `json:"path"`
 		} `json:"config"`
 	}
-	out, err := runRex("keymap", "--json")
+	out, err := rex.Run("keymap", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,12 +123,12 @@ func withoutRex(env []string) []string {
 	return out
 }
 
-func newSession(t *testing.T, label string) pane {
+func newSession(t *testing.T, label string) rex.Pane {
 	t.Helper()
-	if _, err := runRex("new", label); err != nil {
+	if _, err := rex.Run("new", label); err != nil {
 		t.Fatal(err)
 	}
-	panes, err := listPanes("")
+	panes, err := rex.ListPanes("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,12 +138,12 @@ func newSession(t *testing.T, label string) pane {
 		}
 	}
 	t.Fatalf("no session %s in %+v", label, panes)
-	return pane{}
+	return rex.Pane{}
 }
 
 // liveConversation makes what Claude Code leaves on disk, with a process that
 // has the pane's block in its environment.
-func liveConversation(t *testing.T, claude string, p pane, id, name string, lines ...string) {
+func liveConversation(t *testing.T, claude string, p rex.Pane, id, name string, lines ...string) {
 	t.Helper()
 	self, err := os.Executable()
 	if err != nil {
@@ -145,25 +176,25 @@ func TestFindsAPaneByNameByWhatWasSaidAndByItsScreen(t *testing.T) {
 		`{"type":"assistant","timestamp":"t","message":{"content":[{"type":"text","text":"zebrafish needs a lock"}]}}`+"\n",
 		`{"type":"user","timestamp":"t","message":{"content":[{"type":"tool_result","content":"toolnoise"}]}}`+"\n",
 	)
-	if _, err := runRex("send", "-s", "shell-session", "echo mongoose-$((40+2))\n"); err != nil {
+	if _, err := rex.Run("send", "-s", "shell-session", "echo mongoose-$((40+2))\n"); err != nil {
 		t.Fatal(err)
 	}
 
-	take := func() []pane {
+	take := func() []rex.Pane {
 		t.Helper()
-		panes, err := loadPanes("", claude)
+		panes, err := search.LoadPanes("", claude)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return loadText(panes, cache)
+		return search.LoadText(panes, cache)
 	}
 
 	// The shell prints after a moment, and the snapshot is fixed when taken.
-	var panes []pane
+	var panes []rex.Pane
 	deadline := time.Now().Add(20 * time.Second)
 	for {
 		panes = take()
-		if len(search(panes, "mongoose-42")) > 0 {
+		if len(search.Search(panes, "mongoose-42")) > 0 {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -172,7 +203,7 @@ func TestFindsAPaneByNameByWhatWasSaidAndByItsScreen(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	blocks := func(query string) string { return strings.Join(kinds(search(panes, query)), " ") }
+	blocks := func(query string) string { return strings.Join(kinds(search.Search(panes, query)), " ") }
 	if got, want := blocks("agent-session"), "pane:"+agent.Block; got != want {
 		t.Errorf("by session: %s, want %s", got, want)
 	}
@@ -198,10 +229,10 @@ func TestFindsAPaneByNameByWhatWasSaidAndByItsScreen(t *testing.T) {
 	}
 
 	// The picker's own pane is not a result, and the others of its window are here.
-	if _, err := runRex("split", "-s", "agent-session"); err != nil {
+	if _, err := rex.Run("split", "-s", "agent-session"); err != nil {
 		t.Fatal(err)
 	}
-	listed, err := listPanes(agent.Block)
+	listed, err := rex.ListPanes(agent.Block)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +251,7 @@ func TestFindsAPaneByNameByWhatWasSaidAndByItsScreen(t *testing.T) {
 	if here != 1 {
 		t.Errorf("%d panes here", here)
 	}
-	panes, err = loadPanes(shell.Block, claude)
+	panes, err = search.LoadPanes(shell.Block, claude)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +263,7 @@ func TestFindsAPaneByNameByWhatWasSaidAndByItsScreen(t *testing.T) {
 func TestGoToFocusesThePane(t *testing.T) {
 	server(t)
 	target := newSession(t, "target")
-	if _, err := runRex("split", "-s", "target"); err != nil {
+	if _, err := rex.Run("split", "-s", "target"); err != nil {
 		t.Fatal(err)
 	}
 	focused := func() string {
@@ -241,7 +272,7 @@ func TestGoToFocusesThePane(t *testing.T) {
 				Focused string `json:"focused_block_id"`
 			} `json:"windows"`
 		}
-		if err := callRex("session.view", map[string]string{"session_id": target.Session}, &view); err != nil {
+		if err := rex.Call("session.view", map[string]string{"session_id": target.Session}, &view); err != nil {
 			t.Fatal(err)
 		}
 		return view.Windows[0].Focused
@@ -250,7 +281,7 @@ func TestGoToFocusesThePane(t *testing.T) {
 		t.Fatal("the split should have taken the focus")
 	}
 	// With no app connected, showing the session fails. The focus still moved.
-	err := goTo(target.Session, target.Window, target.Block, "")
+	err := rex.GoTo(target.Session, target.Window, target.Block, "")
 	if err == nil {
 		t.Error("no error, but no app is connected")
 	}
@@ -263,7 +294,7 @@ func TestGoToFocusesThePane(t *testing.T) {
 func TestRunActionRunsOnThePaneBehindThePicker(t *testing.T) {
 	server(t)
 	target := newSession(t, "target")
-	if _, err := runRex("split", "-s", "target"); err != nil {
+	if _, err := rex.Run("split", "-s", "target"); err != nil {
 		t.Fatal(err)
 	}
 	var keymap struct {
@@ -271,7 +302,7 @@ func TestRunActionRunsOnThePaneBehindThePicker(t *testing.T) {
 			Path string `json:"path"`
 		} `json:"config"`
 	}
-	out, err := runRex("keymap", "--json")
+	out, err := rex.Run("keymap", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,11 +318,11 @@ end }`, seen)
 	if err := os.WriteFile(keymap.Config.Path, []byte(config), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := runRex("config", "reload"); err != nil {
+	if out, err := rex.Run("config", "reload"); err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
 
-	actions, err := loadActions("")
+	actions, err := rex.LoadActions("")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +333,7 @@ end }`, seen)
 	if !listed["note_block"] || !listed["com.superlogical.terminal.clear"] {
 		t.Fatalf("listed %v", listed)
 	}
-	if err := runAction("note_block", target.Session, target.Block, ""); err != nil {
+	if err := rex.RunAction("note_block", target.Session, target.Block, ""); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(seen)
@@ -317,17 +348,17 @@ end }`, seen)
 func TestRefusesAServerThatDoesNotHoldItsOwnSession(t *testing.T) {
 	server(t)
 	newSession(t, "only")
-	if err := checkServer("session:not-on-this-server"); err == nil {
+	if err := rex.CheckServer("session:not-on-this-server"); err == nil {
 		t.Fatal("no error for a session the server does not have")
 	}
-	panes, err := listPanes("")
+	panes, err := rex.ListPanes("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := checkServer(panes[0].Session); err != nil {
+	if err := rex.CheckServer(panes[0].Session); err != nil {
 		t.Fatal(err)
 	}
-	if err := checkServer(""); err == nil {
+	if err := rex.CheckServer(""); err == nil {
 		t.Fatal("no error outside of Rex")
 	}
 }
@@ -335,12 +366,12 @@ func TestRefusesAServerThatDoesNotHoldItsOwnSession(t *testing.T) {
 func TestCaptureScreenKeepsColors(t *testing.T) {
 	server(t)
 	p := newSession(t, "colors")
-	if _, err := runRex("send", "-s", "colors", `printf '\033[31mmongoose-%d\033[0m\n' 42`+"\n"); err != nil {
+	if _, err := rex.Run("send", "-s", "colors", `printf '\033[31mmongoose-%d\033[0m\n' 42`+"\n"); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(20 * time.Second)
 	for {
-		text, err := captureScreen(p)
+		text, err := rex.Capture(p)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -360,7 +391,7 @@ func TestTheActionOpensThePickerAndClosesIt(t *testing.T) {
 	server(t)
 	p := newSession(t, "work")
 	dir := t.TempDir()
-	if out, err := exec.Command("go", "build", "-o", filepath.Join(dir, "bin", "rexlauncher"), ".").CombinedOutput(); err != nil {
+	if out, err := exec.Command("go", "build", "-o", filepath.Join(dir, "bin", "rexlauncher"), "../cmd/rexlauncher").CombinedOutput(); err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
 	var keymap struct {
@@ -368,14 +399,14 @@ func TestTheActionOpensThePickerAndClosesIt(t *testing.T) {
 			Path string `json:"path"`
 		} `json:"config"`
 	}
-	out, err := runRex("keymap", "--json")
+	out, err := rex.Run("keymap", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := json.Unmarshal(out, &keymap); err != nil {
 		t.Fatal(err)
 	}
-	config, err := os.ReadFile(filepath.Join("rex", "config.lua"))
+	config, err := os.ReadFile(filepath.Join("..", "rex", "config.lua"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +414,7 @@ func TestTheActionOpensThePickerAndClosesIt(t *testing.T) {
 	if err := os.WriteFile(keymap.Config.Path, []byte(loader), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := runRex("config", "reload"); err != nil {
+	if out, err := rex.Run("config", "reload"); err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
 
@@ -396,7 +427,7 @@ func TestTheActionOpensThePickerAndClosesIt(t *testing.T) {
 				} `json:"layers"`
 			} `json:"windows"`
 		}
-		if err := callRex("session.view", map[string]string{"session_id": p.Session}, &view); err != nil {
+		if err := rex.Call("session.view", map[string]string{"session_id": p.Session}, &view); err != nil {
 			t.Fatal(err)
 		}
 		count := 0
@@ -411,7 +442,7 @@ func TestTheActionOpensThePickerAndClosesIt(t *testing.T) {
 	}
 	press := func() {
 		t.Helper()
-		if out, err := runRex("do", "rexlauncher", "-s", "work"); err != nil {
+		if out, err := rex.Run("do", "rexlauncher", "-s", "work"); err != nil {
 			t.Fatalf("%v: %s", err, out)
 		}
 		time.Sleep(300 * time.Millisecond)
@@ -431,11 +462,11 @@ func TestTheActionOpensThePickerAndClosesIt(t *testing.T) {
 	// The picker can close by itself. The next press must open it, and not only try
 	// to close what is gone. On a server with its own socket the program reports that
 	// it cannot reach it, and waits for Enter.
-	panes, err := listPanes("")
+	panes, err := rex.ListPanes("")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := runRex("send-key", "-s", "work", "-b", panes[len(panes)-1].Block, "enter"); err != nil {
+	if out, err := rex.Run("send-key", "-s", "work", "-b", panes[len(panes)-1].Block, "enter"); err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
 	time.Sleep(time.Second)
@@ -457,24 +488,24 @@ func TestTheActionWorksWithNoSession(t *testing.T) {
 			Path string `json:"path"`
 		} `json:"config"`
 	}
-	out, err := runRex("keymap", "--json")
+	out, err := rex.Run("keymap", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := json.Unmarshal(out, &keymap); err != nil {
 		t.Fatal(err)
 	}
-	config, err := os.ReadFile(filepath.Join("rex", "config.lua"))
+	config, err := os.ReadFile(filepath.Join("..", "rex", "config.lua"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(keymap.Config.Path, []byte(fmt.Sprintf("rexd = { plugin = { dir = %q } }\n%s", t.TempDir(), config)), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := runRex("config", "reload"); err != nil {
+	if out, err := rex.Run("config", "reload"); err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
-	if out, err := runRex("do", "rexlauncher"); err != nil && strings.Contains(err.Error(), "index is nil") {
+	if out, err := rex.Run("do", "rexlauncher"); err != nil && strings.Contains(err.Error(), "index is nil") {
 		t.Fatalf("%v: %s", err, out)
 	}
 }
