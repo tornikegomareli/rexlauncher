@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeRex puts a rex on PATH that answers from canned JSON and records its calls, so
@@ -187,5 +188,23 @@ func TestASessionThatClosesWhileListingIsLeftOut(t *testing.T) {
 	}
 	if len(panes) != 1 || panes[0].Block != "b3" {
 		t.Fatalf("got %+v", panes)
+	}
+}
+
+func TestARexCommandThatHangsEnds(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "rex"), []byte("#!/bin/sh\nsleep 60\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	before := rexTimeout
+	rexTimeout = 100 * time.Millisecond
+	defer func() { rexTimeout = before }()
+	start := time.Now()
+	if _, err := runRex("capture"); err == nil {
+		t.Fatal("no error")
+	}
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("took %s", took)
 	}
 }

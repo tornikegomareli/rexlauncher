@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -12,9 +13,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 const maxConcurrent = 8
+
+// rexTimeout is how long a rex command can take. Without a limit, one that hangs would
+// freeze the preview, or leave the picker reading conversations for ever.
+var rexTimeout = 15 * time.Second
 
 // captureScreen reads what a pane shows now, with its colors.
 func captureScreen(p pane) (string, error) {
@@ -90,7 +96,10 @@ func runRex(args ...string) ([]byte, error) {
 		// A terminal in Rex names the folder even if PATH lost it.
 		path = filepath.Join(os.Getenv("REX_BIN_DIR"), "rex")
 	}
-	cmd := exec.Command(path, append([]string{"--autostart=false"}, args...)...)
+	ctx, cancel := context.WithTimeout(context.Background(), rexTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, append([]string{"--autostart=false"}, args...)...)
+	cmd.WaitDelay = time.Second // Do not wait for what it started, once it was ended.
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
