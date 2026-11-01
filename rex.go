@@ -39,6 +39,10 @@ var (
 // the preview reads the screen again and again.
 const maxCarriedColor = 256
 
+// maxCursorMove bounds the gap one cursor move can make. No screen is this wide, and
+// a pane's text decides the number.
+const maxCursorMove = 4096
+
 // screenText keeps the colors of a screen, and turns cursor moves to the right
 // into spaces. Nothing else passes, so that a pane cannot move the picker's cursor.
 // Each line ends with a reset and starts with the colors that are still on, so that
@@ -71,7 +75,7 @@ func screenText(vt string) string {
 				if err != nil {
 					count = 1
 				}
-				out.WriteString(strings.Repeat(" ", count))
+				out.WriteString(strings.Repeat(" ", min(count, maxCursorMove)))
 			}
 		}
 		out.WriteString(clean(line[end:]) + "\x1b[0m")
@@ -86,7 +90,11 @@ func lastColors(colors string) string {
 		return colors
 	}
 	rest := colors[len(colors)-maxCarriedColor:]
-	return rest[max(strings.IndexByte(rest, 0x1b), 0):]
+	at := strings.IndexByte(rest, 0x1b)
+	if at < 0 {
+		return "" // One sequence longer than the limit. Half of it would print as text.
+	}
+	return rest[at:]
 }
 
 // runRex calls rex. It never starts a server: the picker runs inside one.

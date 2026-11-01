@@ -634,3 +634,18 @@ func TestALabelIsDrawnOnceBeforeALongWord(t *testing.T) {
 		t.Fatalf("%d labels in\n%s", got, previewText(m))
 	}
 }
+
+func TestAScreenCannotAskForAnyAmountOfMemory(t *testing.T) {
+	for _, count := range []string{"200000000", "4611686018427387904"} {
+		if got := screenText("\x1b[" + count + "Cx\n"); len(got) > 2*maxCursorMove {
+			t.Errorf("%s: %d bytes", count, len(got))
+		}
+	}
+}
+
+func TestAVeryLongColorIsNotPrintedAsText(t *testing.T) {
+	got := screenText("\x1b[" + strings.Repeat("1;", 400) + "1mone\ntwo\n")
+	if strings.Contains(ansi.Strip(got), ";") {
+		t.Fatalf("got %q", ansi.Strip(got))
+	}
+}
