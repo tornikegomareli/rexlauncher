@@ -23,9 +23,15 @@ func captureScreen(p pane) (string, error) {
 }
 
 var (
-	controlSequence = regexp.MustCompile(`\x1b\[([0-9;:?]*)([ -/]*[@-~])`)
-	otherEscape     = regexp.MustCompile(`\x1b\][^\x07\x1b]*(\x07|\x1b\\\\)?|\x1b[^\[]`)
+	controlSequence = regexp.MustCompile(`\x1b\[([0-9;:?<=>]*)([ -/]*[@-~])`)
+	// A string such as a title or a link, a choice of character set, and the rest.
+	otherEscape = regexp.MustCompile(`\x1b\][^\x07\x1b]*(\x07|\x1b\\)?|\x1b[ -/][0-~]|\x1b[^\[\n]`)
 )
+
+// maxCarriedColor bounds the colors carried from line to line. A program that only
+// uses partial resets, such as 39m, would otherwise add to them on every line, and
+// the preview reads the screen again and again.
+const maxCarriedColor = 256
 
 // screenText keeps the colors of a screen, and turns cursor moves to the right
 // into spaces. Nothing else passes, so that a pane cannot move the picker's cursor.
@@ -45,10 +51,13 @@ func screenText(vt string) string {
 			parameters, kind := line[at[2]:at[3]], line[at[4]:at[5]]
 			switch kind {
 			case "m":
+				if strings.ContainsAny(parameters, "<=>?") {
+					continue // A private mode, and not a color.
+				}
 				if parameters == "" || parameters == "0" {
 					active = ""
 				} else {
-					active += line[at[0]:at[1]]
+					active = lastColors(active + line[at[0]:at[1]])
 				}
 				out.WriteString(line[at[0]:at[1]])
 			case "C":
@@ -63,6 +72,15 @@ func screenText(vt string) string {
 		lines[i] = out.String()
 	}
 	return strings.Join(lines, "\n") + "\n"
+}
+
+// lastColors keeps the newest colors, starting at a whole sequence.
+func lastColors(colors string) string {
+	if len(colors) <= maxCarriedColor {
+		return colors
+	}
+	rest := colors[len(colors)-maxCarriedColor:]
+	return rest[max(strings.IndexByte(rest, 0x1b), 0):]
 }
 
 // runRex calls rex. It never starts a server: the picker runs inside one.

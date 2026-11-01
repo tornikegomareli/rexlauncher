@@ -335,6 +335,17 @@ func TestAScreenReadOfAnotherPaneReadsTheSelectedOneNext(t *testing.T) {
 	}
 }
 
+func TestLettersAreMarkedInTheNameAsDrawn(t *testing.T) {
+	m := open(t, 120, 30, pane{Block: "a", Name: "\x07\x07tilebar", SessionLabel: "s"})
+	typeText(m, "tlbr")
+	out := m.View()
+	for _, want := range []string{styleHit + "mt", styleHit + "ml", styleHit + "mb", styleHit + "mr"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in %q", want, out)
+		}
+	}
+}
+
 func TestALetterLeftOutMarksTheOthers(t *testing.T) {
 	m := open(t, 120, 30, pane{Block: "a", Name: "tilebar", SessionLabel: "s"})
 	typeText(m, "tlbr")
@@ -587,5 +598,30 @@ func TestRenamingATabKeepsWhatItShows(t *testing.T) {
 	press(m, tea.KeyTab)
 	if rows := m.visible(); len(rows) != 1 || rows[0].Pane.Block != "named" {
 		t.Fatalf("got %+v", rows)
+	}
+}
+
+func TestScreenTextDropsEverySequenceItDoesNotKeep(t *testing.T) {
+	for _, c := range []struct{ name, input, want string }{
+		{"a character set", "\x1b(Bplain\n", "plain"},
+		{"a private mode", "\x1b[>4;2mplain\n", "plain"},
+		{"a title ended by ST", "\x1b]0;title\x1b\\plain\n", "plain"},
+		{"a link", "\x1b]8;;http://x\x1b\\text\x1b]8;;\x1b\\\n", "text"},
+	} {
+		if got := ansi.Strip(screenText(c.input)); strings.TrimRight(got, "\n") != c.want {
+			t.Errorf("%s: got %q", c.name, got)
+		}
+	}
+	if got := screenText("one\x1b\ntwo\n"); !strings.Contains(got, "one") || strings.Count(got, "\n") != 2 {
+		t.Errorf("an escape at the end of a line joined two lines: %q", got)
+	}
+}
+
+// Lines that only use partial resets never end a color. Reading them must stay cheap,
+// because the preview reads the screen again every 600 ms.
+func TestScreenTextCarriesABoundedAmountOfColor(t *testing.T) {
+	got := screenText(strings.Repeat("\x1b[39mline\x1b[22m\n", 8000))
+	if len(got) > 8000*(maxCarriedColor+64) {
+		t.Fatalf("%d bytes from 8000 short lines", len(got))
 	}
 }
