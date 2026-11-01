@@ -481,9 +481,12 @@ func TestTheActionOpensThePickerAndClosesIt(t *testing.T) {
 	if out, err := rex.Run("send-key", "-s", "work", "-b", panes[len(panes)-1].Block, "enter"); err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
-	time.Sleep(time.Second)
-	if got := floating(); got != 0 {
-		t.Fatalf("after it closed: %d floating layers", got)
+	deadline := time.Now().Add(10 * time.Second)
+	for floating() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("after it closed: %d floating layers", floating())
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	press()
 	if got := floating(); got != 1 {
