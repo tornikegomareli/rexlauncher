@@ -30,6 +30,10 @@ const indexMaxAge = 30 * 24 * time.Hour
 // tmpPrefix starts the name of an index that is still being written.
 const tmpPrefix = ".writing-"
 
+// wrappedByClaudeCode is how a message from Claude Code itself starts, as opposed to
+// what a person typed, which can start with a tag too.
+var wrappedByClaudeCode = regexp.MustCompile(`^<(task-notification|system-reminder|user-prompt-submit-hook|command-[a-z-]+|local-command-[a-z-]+|bash-[a-z-]+)\b`)
+
 type message struct {
 	Role string
 	At   string
@@ -99,7 +103,7 @@ func extractMessage(line []byte) (message, bool) {
 		}
 	}
 	text := strings.TrimSpace(strings.Join(parts, "\n"))
-	if text == "" || (entry.Type == "user" && strings.HasPrefix(text, "<")) {
+	if text == "" || (entry.Type == "user" && wrappedByClaudeCode.MatchString(text)) {
 		return message{}, false
 	}
 	return message{Role: entry.Type, At: entry.Timestamp, Text: text}, true

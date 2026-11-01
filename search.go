@@ -263,7 +263,7 @@ func (p pane) title() string {
 }
 
 var (
-	imageTag = regexp.MustCompile(`\[Image #\d+\]`)
+	imageTag = regexp.MustCompile(`\[Image #\d+\]|</?pasted_content[^>]*>`)
 	heading  = regexp.MustCompile(`(^|\s)#{1,6}\s`)
 	markdown = strings.NewReplacer("**", "", "`", "")
 )

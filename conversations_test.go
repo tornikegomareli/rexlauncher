@@ -281,3 +281,25 @@ func TestLoadTextReadsAConversationFromItsPane(t *testing.T) {
 		t.Fatalf("got %+v", got)
 	}
 }
+
+func TestAMessageThatStartsWithATagIsAPersonsWords(t *testing.T) {
+	for _, text := range []string{"<Button> crashes on tap", "<div> does not center"} {
+		if _, ok := extractMessage([]byte(userLine(text))); !ok {
+			t.Errorf("%s was left out", text)
+		}
+	}
+	for _, text := range []string{"<task-notification>done</task-notification>", "<local-command-stdout>x</local-command-stdout>", "<bash-input>ls</bash-input>", "<system-reminder>x</system-reminder>"} {
+		if _, ok := extractMessage([]byte(userLine(text))); ok {
+			t.Errorf("%s was kept", text)
+		}
+	}
+}
+
+func TestPastedTextIsSearchedWithoutItsTag(t *testing.T) {
+	if _, ok := extractMessage([]byte(userLine("<pasted_content>the log</pasted_content>"))); !ok {
+		t.Fatal("left out")
+	}
+	if got := plain(`<pasted_content id="2c24">the zebrafish log</pasted_content>`); got != "the zebrafish log" {
+		t.Fatalf("got %q", got)
+	}
+}
