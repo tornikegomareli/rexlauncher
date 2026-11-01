@@ -1,8 +1,14 @@
-# Rex Launcher
+<h1 align="center">Rex Launcher</h1>
 
-A [rexd](https://github.com/tornikegomareli/rexd) plugin for [Rex](https://www.superlogical.com/rex). It searches every pane on your server, and the words said in the Claude Code conversations inside them, then goes to the pane you choose.
+<h3 align="center">Find any Rex pane by what was said in it.</h3>
 
-Type part of a name, or a word you remember from a conversation:
+<p align="center">
+  <img src=".github/assets/hero.png" width="100%" alt="A Rex window with Rex Launcher open over it. The search for migration finds two Claude Code conversations, and the preview on the right shows the messages that hold the word" />
+</p>
+
+Rex Launcher is a [rexd](https://github.com/tornikegomareli/rexd) plugin for [Rex](https://www.superlogical.com/rex). It searches every pane on your server, and the words said in the Claude Code conversations inside them, then goes to the pane you choose.
+
+Type part of a name, or a word you remember from a conversation. The picker looks like this in text:
 
 ```
  › zebrafish                                                              1 pane
@@ -54,7 +60,7 @@ rex.bind("cmd+shift+k", has_launcher and "rexlauncher" or "session.switch")
 | Move by a page, or to the first or last row | PageUp, PageDown, Home, End |
 | Go to the selected pane | Enter, or click the selected row |
 | Filter: All, Panes, Conversations, Screens | Tab, Shift+Tab |
-| Scroll the preview | Shift+Up, Shift+Down, or the wheel |
+| Scroll the matches in the preview | Shift+Up, Shift+Down, or the wheel |
 | Delete a word, or the whole query | Ctrl+W, Ctrl+U |
 | Close | Esc |
 
@@ -89,6 +95,7 @@ Nothing leaves your machine. A transcript is mostly tool output, so the plugin k
 ## Develop
 
 ```sh
+git clone https://github.com/tornikegomareli/rexlauncher.git
 rexd install ./rexlauncher --link
 make test    # unit tests
 make e2e     # against a Rex server of its own
@@ -96,4 +103,4 @@ make e2e     # against a Rex server of its own
 
 ## License
 
-MIT
+[MIT License](LICENSE).
