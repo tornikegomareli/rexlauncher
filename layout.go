@@ -71,7 +71,7 @@ func (m *model) arrange() {
 		if at > 0 && m.lines[at-1].heading {
 			at-- // Keep the heading of a section with its first row.
 		}
-		m.offset = min(m.offset, at)
+		m.offset = min(m.offset, at, max(len(m.lines)-m.bodyHeight(), 0))
 		if lineOf[m.selected] >= m.offset+m.bodyHeight() {
 			m.offset = lineOf[m.selected] - m.bodyHeight() + 1
 		}

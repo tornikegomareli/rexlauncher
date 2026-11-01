@@ -659,3 +659,16 @@ func TestAnErrorInThePreviewCannotMoveTheCursor(t *testing.T) {
 		t.Fatalf("got %q", m.View())
 	}
 }
+
+func TestAGrownWindowShowsTheWholeList(t *testing.T) {
+	var panes []pane
+	for i := range 20 {
+		panes = append(panes, pane{Block: fmt.Sprint(i), Name: fmt.Sprintf("pane-%d", i)})
+	}
+	m := open(t, 120, 12, panes...)
+	press(m, tea.KeyEnd)
+	send(m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	if out := view(m); !strings.Contains(out, "pane-0 ") {
+		t.Fatalf("got\n%s", out)
+	}
+}
