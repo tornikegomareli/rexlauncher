@@ -34,7 +34,10 @@ if [ "$1" = api ]; then
   block="$(printf '%s' "$4" | sed -n 's/.*"block_id":"\([^"]*\)".*/\1/p')"
   [ -n "$block" ] && key="$3.$block.$method"
   for file in "` + dir + `/$key.json" "` + dir + `/$3.json"; do
-    if [ -f "$file" ]; then cat "$file"; exit 0; fi
+    if [ -f "$file" ]; then
+      if grep -q '^"FAIL"$' "$file"; then echo "no such session" >&2; exit 1; fi
+      cat "$file"; exit 0
+    fi
   done
   echo '{}'
   exit 0
@@ -170,5 +173,19 @@ func TestGoToFallsBackWhenTheClientIsGone(t *testing.T) {
 	got := calls()
 	if len(got) != 3 || !strings.Contains(got[1], "-C gone") || strings.Contains(got[2], "-C") {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestASessionThatClosesWhileListingIsLeftOut(t *testing.T) {
+	answers := twoSessions()
+	answers["session.list"] = block{"sessions": []block{{"session_id": "s2"}, {"session_id": "gone"}}}
+	answers["session.view.gone"] = "FAIL"
+	fakeRex(t, answers)
+	panes, err := listPanes("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(panes) != 1 || panes[0].Block != "b3" {
+		t.Fatalf("got %+v", panes)
 	}
 }

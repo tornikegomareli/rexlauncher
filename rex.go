@@ -164,12 +164,21 @@ func listPanes(self string) ([]pane, error) {
 	forEach(len(list.Sessions), func(i int) {
 		found[i], errs[i] = sessionPanes(list.Sessions[i].ID, self)
 	})
+	// A session can close while this runs, so one failure only leaves it out. If
+	// none can be read, something else is wrong.
 	var panes []pane
+	var failure error
+	read := 0
 	for i := range found {
 		if errs[i] != nil {
-			return nil, errs[i]
+			failure = errs[i]
+			continue
 		}
+		read++
 		panes = append(panes, found[i]...)
+	}
+	if read == 0 && failure != nil {
+		return nil, failure
 	}
 	forEach(len(panes), func(i int) { describePane(&panes[i]) })
 	return panes, nil
