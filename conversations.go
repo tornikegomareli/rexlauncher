@@ -272,7 +272,8 @@ func findConversations(claudeDir string) map[string]conversation {
 	})
 	conversations := map[string]conversation{}
 	for i, block := range blocks {
-		if block != "" {
+		// A pane can hold two, such as a session stopped with ctrl+z and a new one.
+		if block != "" && found[i].Active.After(conversations[block].Active) {
 			conversations[block] = found[i]
 		}
 	}

@@ -303,3 +303,17 @@ func TestPastedTextIsSearchedWithoutItsTag(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestTheNewestConversationWinsItsPane(t *testing.T) {
+	claude := t.TempDir()
+	const pane = "block:0000aaaa-0000-0000-0000-000000000004"
+	liveSession(t, claude, pane, "fresh", "interactive", "Fresh", userLine("hello"))
+	liveSession(t, claude, pane, "stale", "interactive", "Stale", userLine("hello"))
+	old := time.Now().Add(-240 * time.Hour)
+	if err := os.Chtimes(filepath.Join(claude, "projects", "-some-folder", "stale.jsonl"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	if c := findConversations(claude)[pane]; c.ID != "fresh" {
+		t.Fatalf("got %+v", c)
+	}
+}
