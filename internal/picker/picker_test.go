@@ -33,7 +33,8 @@ func showing(block, name string, text string) rex.Pane {
 func open(t *testing.T, width, height int, panes ...rex.Pane) *model {
 	t.Helper()
 	m := &model{
-		loadText: func(p []rex.Pane) []rex.Pane { return p },
+		loadStatuses: func([]rex.Pane) map[string]rex.Status { return nil },
+		loadText:     func(p []rex.Pane) []rex.Pane { return p },
 		capture: func(p rex.Pane) (string, error) {
 			return "screen of " + p.Block + "\n", nil
 		},
@@ -63,7 +64,7 @@ func runCmd(m *model, cmd tea.Cmd) {
 		return
 	}
 	switch msg.(type) {
-	case panesMsg, textMsg, captureMsg:
+	case panesMsg, textMsg, captureMsg, statusesMsg, answeredMsg:
 		send(m, msg)
 	}
 }
@@ -410,7 +411,8 @@ func TestAColorOfTheScreenStaysInsideThePreview(t *testing.T) {
 func TestThePreviewReadsTheScreenAgainOnTheTimer(t *testing.T) {
 	reads := 0
 	m := &model{
-		loadText: func(p []rex.Pane) []rex.Pane { return p },
+		loadStatuses: func([]rex.Pane) map[string]rex.Status { return nil },
+		loadText:     func(p []rex.Pane) []rex.Pane { return p },
 		capture: func(p rex.Pane) (string, error) {
 			reads++
 			return fmt.Sprintf("read %d", reads), nil
@@ -601,11 +603,12 @@ func TestTypedWordsAreNotKeys(t *testing.T) {
 
 // A tab's name is only a label: what it keeps must not depend on it.
 func TestRenamingATabKeepsWhatItShows(t *testing.T) {
-	name := search.Filters[1].Name
-	search.Filters[1].Name = "Terminals"
-	defer func() { search.Filters[1].Name = name }()
+	name := search.Filters[2].Name
+	search.Filters[2].Name = "Terminals"
+	defer func() { search.Filters[2].Name = name }()
 	m := open(t, 120, 30, demoPanes(t)...)
 	typeText(m, "panes")
+	press(m, tea.KeyTab)
 	press(m, tea.KeyTab)
 	if rows := m.visible(); len(rows) != 1 || rows[0].Pane.Block != "named" {
 		t.Fatalf("got %+v", rows)
@@ -1017,5 +1020,182 @@ func TestSkillTextCannotMoveThePickersCursor(t *testing.T) {
 	showTab(m, search.SkillsTab)
 	if view := m.View(); strings.Contains(view, "\x1b[2J") || strings.Contains(view, "\x1b[H") {
 		t.Fatalf("escape in:\n%q", view)
+	}
+}
+
+func blockedAgent(block, kind string) rex.Pane {
+	return rex.Pane{Block: block, Session: "s", Name: block, Conversation: &conversations.Conversation{}, Status: rex.Status{State: rex.StateBlocked, Kind: kind, Message: "Allow Bash?"}}
+}
+
+func TestABlockedAgentLooksDifferentFromAnIdleOne(t *testing.T) {
+	m := open(t, 120, 30, blockedAgent("waits", "permission"), rex.Pane{Block: "rest", Session: "s", Name: "rest", Status: rex.Status{State: rex.StateIdle}})
+	view := ansi.Strip(m.View())
+	for _, want := range []string{"Needs you", "permission", "Allow Bash?"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("no %q in:\n%s", want, view)
+		}
+	}
+	if r, _ := m.current(); r.Pane.Block != "waits" {
+		t.Fatalf("selected %+v", r.Pane.Block)
+	}
+}
+
+func TestTheNeedsYouTabKeepsOnlyWhatNeedsThePerson(t *testing.T) {
+	m := open(t, 120, 30, blockedAgent("waits", "question"),
+		rex.Pane{Block: "shell", Session: "s", Name: "shell"},
+		rex.Pane{Block: "busy", Session: "s", Name: "busy", Status: rex.Status{State: rex.StateWorking}},
+		rex.Pane{Block: "done", Session: "s", Name: "done", Status: rex.Status{State: rex.StateDone}})
+	showTab(m, search.NeedsTab)
+	var got []string
+	for _, r := range m.visible() {
+		got = append(got, r.Pane.Block)
+	}
+	if strings.Join(got, " ") != "waits done" {
+		t.Fatalf("got %q", got)
+	}
+	m = open(t, 120, 30, rex.Pane{Block: "shell", Session: "s", Name: "shell"})
+	showTab(m, search.NeedsTab)
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "Nothing needs you") {
+		t.Fatalf("no empty state in:\n%s", view)
+	}
+}
+
+func TestAStatusThatChangesMovesTheRow(t *testing.T) {
+	m := open(t, 120, 30, rex.Pane{Block: "a", Session: "s", Name: "a"}, rex.Pane{Block: "b", Session: "s", Name: "b"})
+	send(m, statusesMsg{map[string]rex.Status{"b": {State: rex.StateBlocked, Kind: "permission"}}})
+	if rows := m.visible(); rows[0].Pane.Block != "b" || rows[0].Heading() != "Needs you" {
+		t.Fatalf("got %+v", rows[0])
+	}
+	send(m, statusesMsg{map[string]rex.Status{"b": {State: rex.StateIdle}}})
+	if rows := m.visible(); rows[0].Heading() == "Needs you" {
+		t.Fatalf("got %+v", rows[0])
+	}
+}
+
+func TestTextArrivingLaterKeepsTheNewestStatus(t *testing.T) {
+	m := open(t, 120, 30, rex.Pane{Block: "a", Session: "s", Name: "a"})
+	older := append([]rex.Pane(nil), m.panes...)
+	send(m, statusesMsg{map[string]rex.Status{"a": {State: rex.StateBlocked}}})
+	send(m, textMsg{panes: older})
+	if m.panes[0].Status.State != rex.StateBlocked {
+		t.Fatalf("got %+v", m.panes[0].Status)
+	}
+}
+
+// answerable returns a picker on a pane, and what reaches it.
+func answerable(t *testing.T, p rex.Pane) (*model, *[]rex.Answer) {
+	t.Helper()
+	m := open(t, 120, 30, p)
+	var got []rex.Answer
+	m.answer = func(_ rex.Pane, a rex.Answer) error { got = append(got, a); return nil }
+	send(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	return m, &got
+}
+
+func TestANumberAnswersAMenuAndThePickerStaysOpen(t *testing.T) {
+	m, got := answerable(t, blockedAgent("a", "permission"))
+	if m.answering == nil {
+		t.Fatal("not answering")
+	}
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "Press a number") || !strings.Contains(view, "Choose") {
+		t.Fatalf("no menu hint in:\n%s", view)
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("2")})
+	runCmd(m, cmd)
+	if len(*got) != 1 || (*got)[0].Key != "2" || (*got)[0].Seen.Message != "Allow Bash?" {
+		t.Fatalf("got %+v", *got)
+	}
+	if m.answering != nil || m.chosen != nil || !strings.Contains(ansi.Strip(m.View()), "Sent to a") {
+		t.Fatalf("answering %v, chosen %v:\n%s", m.answering, m.chosen, ansi.Strip(m.View()))
+	}
+}
+
+func TestAMenuTakesNoText(t *testing.T) {
+	m, got := answerable(t, blockedAgent("a", "question"))
+	for _, text := range []string{"y", "yes", "0", "22"} {
+		send(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(text)})
+	}
+	if len(*got) != 0 || m.answering == nil {
+		t.Fatalf("got %+v", *got)
+	}
+}
+
+func TestEnterOnAMenuGoesToThePaneAndAnswersNothing(t *testing.T) {
+	m, got := answerable(t, blockedAgent("a", "permission"))
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil || m.chosen == nil || m.chosen.Block != "a" || len(*got) != 0 {
+		t.Fatalf("chosen %+v, got %+v", m.chosen, *got)
+	}
+}
+
+func TestEscLeavesAnAnswerAndKeepsThePickerOpen(t *testing.T) {
+	m, got := answerable(t, blockedAgent("a", "permission"))
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.answering != nil || len(*got) != 0 {
+		t.Fatalf("answering %+v, got %+v", m.answering, *got)
+	}
+	if cmd != nil {
+		if _, quit := cmd().(tea.QuitMsg); quit {
+			t.Fatal("the picker closed")
+		}
+	}
+}
+
+func TestAPasswordPromptCannotBeAnswered(t *testing.T) {
+	m, _ := answerable(t, blockedAgent("a", "auth"))
+	if m.answering != nil || !strings.Contains(ansi.Strip(m.View()), "password") {
+		t.Fatalf("answering %+v:\n%s", m.answering, ansi.Strip(m.View()))
+	}
+}
+
+func TestAShellCannotBeAnswered(t *testing.T) {
+	m, _ := answerable(t, rex.Pane{Block: "a", Session: "s", Name: "shell"})
+	if m.answering != nil || !strings.Contains(ansi.Strip(m.View()), "Only an agent") {
+		t.Fatalf("answering %+v:\n%s", m.answering, ansi.Strip(m.View()))
+	}
+}
+
+func TestTextGoesToAnAgentAtRest(t *testing.T) {
+	p := rex.Pane{Block: "a", Session: "s", Name: "a", Conversation: &conversations.Conversation{}, Status: rex.Status{State: rex.StateDone, Message: "ok"}}
+	m, got := answerable(t, p)
+	send(m, tea.KeyMsg{Type: tea.KeyEnter}) // Nothing to send yet.
+	if len(*got) != 0 {
+		t.Fatalf("got %+v", *got)
+	}
+	send(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("next step")})
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "Answer a") || !strings.Contains(view, "next step") {
+		t.Fatalf("no text in:\n%s", view)
+	}
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	runCmd(m, cmd)
+	if len(*got) != 1 || (*got)[0].Text != "next step" || (*got)[0].Seen.State != rex.StateDone {
+		t.Fatalf("got %+v", *got)
+	}
+}
+
+func TestAFailedAnswerSaysWhy(t *testing.T) {
+	m, _ := answerable(t, blockedAgent("a", "permission"))
+	m.answer = func(rex.Pane, rex.Answer) error { return errString("the agent moved on") }
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("1")})
+	runCmd(m, cmd)
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "Not sent: the agent moved on") {
+		t.Fatalf("no reason in:\n%s", view)
+	}
+}
+
+func TestWhileAnsweringThePreviewShowsTheScreenEvenWithMatches(t *testing.T) {
+	p := blockedAgent("a", "permission")
+	p.Text = []textutil.Entry{{Text: "a word", Lower: "a word"}}
+	m := open(t, 120, 30, p)
+	typeText(m, "word")
+	r, _ := m.current()
+	if m.showsScreen(r) {
+		t.Fatal("matches should show before an answer starts")
+	}
+	send(m, tea.KeyMsg{Type: tea.KeyCtrlR})
+	r, _ = m.current()
+	if !m.showsScreen(r) {
+		t.Fatal("no screen while answering")
 	}
 }

@@ -60,7 +60,7 @@ func (m *model) arrange() {
 	lineOf := make([]int, len(rows))
 	heading := ""
 	for i, r := range rows {
-		if m.filter == 0 && r.Heading() != heading { // The tab with every section.
+		if (m.filter == search.AllTab || m.filter == search.NeedsTab) && r.Heading() != heading {
 			if heading != "" {
 				m.lines = append(m.lines, listLine{gap: true})
 			}

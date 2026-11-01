@@ -22,6 +22,8 @@ const (
 	stayAliveVariable = "REXLAUNCHER_TEST_STAY_ALIVE"
 	// promptVariable makes this program act as an agent: it says each line it gets.
 	promptVariable = "REXLAUNCHER_TEST_PROMPT"
+	// statusVariable is the status that program reports, in the Program Status Protocol.
+	statusVariable = "REXLAUNCHER_TEST_STATUS"
 )
 
 func userLine(text string) string {
@@ -52,6 +54,9 @@ func kinds(results []search.Result) []string {
 
 func TestMain(m *testing.M) {
 	if os.Getenv(promptVariable) != "" {
+		if status := os.Getenv(statusVariable); status != "" {
+			fmt.Print("\x1b]7501;" + status + "\x1b\\")
+		}
 		lines := bufio.NewScanner(os.Stdin)
 		for lines.Scan() {
 			fmt.Printf("sent [%s]\n", lines.Text())
@@ -194,7 +199,7 @@ func TestFindsAPaneByNameByWhatWasSaidAndByItsScreen(t *testing.T) {
 
 	take := func() []rex.Pane {
 		t.Helper()
-		panes, err := search.LoadPanes("", claude)
+		panes, err := search.LoadPanes("", "", claude)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -263,7 +268,7 @@ func TestFindsAPaneByNameByWhatWasSaidAndByItsScreen(t *testing.T) {
 	if here != 1 {
 		t.Errorf("%d panes here", here)
 	}
-	panes, err = search.LoadPanes(shell.Block, claude)
+	panes, err = search.LoadPanes(shell.Block, "", claude)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -619,4 +624,100 @@ func TestEnterPutsASkillInThePromptOfTheAgentBehindThePicker(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(target.Block, "sent [/grilling ]")
+}
+
+// standIn starts a program in a session that says each line it gets and reports a status.
+func standIn(t *testing.T, label, status string) rex.Pane {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := rex.Run("new", label, "--shell=none", "--keep-open", "--", "/usr/bin/env", promptVariable+"=1", statusVariable+"="+status, self); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	panes, err := rex.ListPanes("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range panes {
+		if p.SessionLabel == label {
+			return p
+		}
+	}
+	t.Fatalf("no pane in %s", label)
+	return rex.Pane{}
+}
+
+func waitForScreen(t *testing.T, p rex.Pane, want string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		out, err := rex.Run("capture", "-s", p.Session, "-b", p.Block, "--trim")
+		if err == nil && strings.Contains(string(out), want) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no %q in:\n%s", want, out)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func waitForStatus(t *testing.T, p rex.Pane, state string) rex.Status {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		status, err := rex.ReadStatus(p.Session, p.Block)
+		if err == nil && status.State == state {
+			return status
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%v: status %+v", err, status)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// "Allow Bash?" in base64, as the protocol carries text.
+const blockedReport = "state=blocked:kind=permission:app=stand-in:msg=QWxsb3cgQmFzaD8="
+
+func TestRexReportsAStatusAndAKeyReachesAMenu(t *testing.T) {
+	server(t)
+	p := standIn(t, "agent", blockedReport)
+	seen := waitForStatus(t, p, rex.StateBlocked)
+	if seen.Kind != "permission" || seen.Message != "Allow Bash?" || seen.App != "stand-in" || seen.At.IsZero() {
+		t.Fatalf("%+v", seen)
+	}
+	if err := rex.Deliver(p.Session, p.Block, rex.Answer{Key: "2", Seen: seen}); err != nil {
+		t.Fatal(err)
+	}
+	waitForScreen(t, p, "2")
+	if err := rex.Deliver(p.Session, p.Block, rex.Answer{Text: "hello", Seen: seen}); err == nil {
+		t.Fatal("text went to a menu")
+	}
+}
+
+func TestAnAnswerReachesAnAgentAtRest(t *testing.T) {
+	server(t)
+	p := standIn(t, "agent", "state=done:app=stand-in")
+	seen := waitForStatus(t, p, rex.StateDone)
+	if err := rex.Deliver(p.Session, p.Block, rex.Answer{Text: "next step", Seen: seen}); err != nil {
+		t.Fatal(err)
+	}
+	waitForScreen(t, p, "sent [next step]")
+}
+
+func TestAnAnswerIsRefusedOnceTheAgentMovedOn(t *testing.T) {
+	server(t)
+	p := standIn(t, "agent", blockedReport)
+	seen := waitForStatus(t, p, rex.StateBlocked)
+	seen.Message = "Allow something else?"
+	if err := rex.Deliver(p.Session, p.Block, rex.Answer{Key: "1", Seen: seen}); err == nil {
+		t.Fatal("a key went to a prompt the person did not see")
+	}
+	out, err := rex.Run("capture", "-s", p.Session, "-b", p.Block, "--trim")
+	if err != nil || strings.Contains(string(out), "1") {
+		t.Fatalf("%v: pane holds %q", err, out)
+	}
 }

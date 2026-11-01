@@ -11,14 +11,15 @@ import (
 )
 
 // LoadPanes lists the panes, with the names of their conversations. It is enough
-// to show the picker.
-func LoadPanes(self, claude string) ([]rex.Pane, error) {
+// to show the picker. From is the pane the picker opened from.
+func LoadPanes(self, from, claude string) ([]rex.Pane, error) {
 	panes, err := rex.ListPanes(self)
 	if err != nil {
 		return nil, err
 	}
 	conversations := conversations.Find(claude)
 	for i := range panes {
+		panes[i].From = panes[i].Block == from
 		if c, ok := conversations[panes[i].Block]; ok {
 			panes[i].Conversation = &c
 			if c.Name != "" {

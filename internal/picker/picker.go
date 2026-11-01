@@ -16,7 +16,8 @@ const (
 	// Below this width, the preview has no room, and the list takes all of it.
 	previewMinimumWidth = 72
 	refreshInterval     = 600 * time.Millisecond
-	metadataRows        = 4
+	// statusEvery is how many refreshes pass between asking the panes what they do.
+	statusEvery = 3
 
 	// SGR parameters. They come from the terminal's palette, so the picker follows
 	// a light or a dark theme.
@@ -25,6 +26,9 @@ const (
 	styleHit      = "1;33"
 	styleAccent   = "34"
 	styleSelected = "100"
+	styleBlocked  = "1;33"
+	styleError    = "1;31"
+	styleDone     = "32"
 )
 
 // Sources are where the picker gets what it shows.
@@ -39,6 +43,10 @@ type Sources struct {
 	Actions func() ([]rex.Action, error)
 	// Skills lists what the agent in the pane behind the picker can run.
 	Skills func() (skills.Installed, error)
+	// Statuses asks the panes what their programs are doing now.
+	Statuses func([]rex.Pane) map[string]rex.Status
+	// Answer gives an agent what the person told it.
+	Answer func(rex.Pane, rex.Answer) error
 }
 
 // Choice is what the person chose: a pane, an action, a skill, or none of them.
@@ -50,7 +58,8 @@ type Choice struct {
 
 // Run shows the picker until the person chooses or closes it.
 func Run(sources Sources) (Choice, error) {
-	m := &model{loadPanes: sources.Panes, loadText: sources.Text, capture: sources.Screen, loadActions: sources.Actions, loadSkills: sources.Skills}
+	m := &model{loadPanes: sources.Panes, loadText: sources.Text, capture: sources.Screen, loadActions: sources.Actions, loadSkills: sources.Skills,
+		loadStatuses: sources.Statuses, answer: sources.Answer}
 	if _, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
 		return Choice{}, err
 	}
@@ -65,6 +74,18 @@ type model struct {
 	// loadActions lists what Rex can do.
 	loadActions func() ([]rex.Action, error)
 	loadSkills  func() (skills.Installed, error)
+	// loadStatuses asks the panes what their programs are doing now.
+	loadStatuses func([]rex.Pane) map[string]rex.Status
+	answer       func(rex.Pane, rex.Answer) error
+
+	ticks         int
+	readingStatus bool
+	// answering is the agent the person is answering, while they do.
+	answering    *rex.Pane
+	answerText   []rune
+	answerCursor int
+	// notice says what just happened, until the next key.
+	notice string
 
 	actions      []rex.Action
 	actionsErr   error
@@ -105,6 +126,11 @@ type (
 	skillsMsg struct {
 		installed skills.Installed
 		err       error
+	}
+	statusesMsg struct{ statuses map[string]rex.Status }
+	answeredMsg struct {
+		pane rex.Pane
+		err  error
 	}
 	textMsg    struct{ panes []rex.Pane }
 	captureMsg struct {
@@ -158,9 +184,25 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.installed, m.skillsErr, m.skillsLoaded = msg.installed, msg.err, true
 		m.refresh(true)
 	case textMsg:
+		// The statuses may be newer than the panes this was reading.
+		statuses := map[string]rex.Status{}
+		for _, p := range m.panes {
+			statuses[p.Block] = p.Status
+		}
 		m.panes, m.textLoaded = msg.panes, true
+		m.applyStatuses(statuses)
 		m.refresh(true)
 		return m, m.captureSelected()
+	case statusesMsg:
+		m.readingStatus = false
+		m.applyStatuses(msg.statuses)
+		m.refresh(true)
+	case answeredMsg:
+		m.notice = "Sent to " + textutil.Clean(msg.pane.Title())
+		if msg.err != nil {
+			m.notice = "Not sent: " + textutil.Clean(msg.err.Error())
+		}
+		return m, m.readStatuses()
 	case captureMsg:
 		m.capturing = false
 		if m.screens == nil {
@@ -172,6 +214,10 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.captureSelected()
 		}
 	case tickMsg:
+		m.ticks++
+		if m.ticks%statusEvery == 0 {
+			return m, tea.Batch(tick(), m.captureSelected(), m.readStatuses())
+		}
 		return m, tea.Batch(tick(), m.captureSelected())
 	case tea.KeyMsg:
 		return m.key(msg)
@@ -220,10 +266,11 @@ func (m *model) mouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 var pastedLines = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "\t", " ")
 
 func (m *model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	name := msg.String()
-	if msg.Type == tea.KeyRunes && !msg.Alt {
-		name = "" // Typed text, which can spell the name of a key.
+	m.notice = ""
+	if m.answering != nil {
+		return m.answerKey(msg)
 	}
+	name := keyName(msg)
 	switch name {
 	case "esc", "ctrl+c":
 		return m, tea.Quit
@@ -240,6 +287,8 @@ func (m *model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		return m, nil
+	case "ctrl+r":
+		return m, m.startAnswer()
 	case "up", "ctrl+p":
 		return m, m.move(m.selected - 1)
 	case "down", "ctrl+n":
@@ -262,50 +311,148 @@ func (m *model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.setFilter((m.filter + 1) % len(search.Filters))
 	case "shift+tab":
 		return m, m.setFilter((m.filter + len(search.Filters) - 1) % len(search.Filters))
-	case "left", "ctrl+b":
-		m.cursor = max(m.cursor-1, 0)
-		return m, nil
-	case "right", "ctrl+f":
-		m.cursor = min(m.cursor+1, len(m.query))
-		return m, nil
-	case "ctrl+a":
-		m.cursor = 0
-		return m, nil
-	case "ctrl+e":
-		m.cursor = len(m.query)
-		return m, nil
-	case "backspace":
-		if m.cursor > 0 {
-			m.query = append(m.query[:m.cursor-1:m.cursor-1], m.query[m.cursor:]...)
-			m.cursor--
-		}
-	case "delete", "ctrl+d":
-		if m.cursor < len(m.query) {
-			m.query = append(m.query[:m.cursor:m.cursor], m.query[m.cursor+1:]...)
-		}
-	case "ctrl+u":
-		m.query, m.cursor = nil, 0
-	case "ctrl+w":
-		start := m.cursor
-		for start > 0 && m.query[start-1] == ' ' {
-			start--
-		}
-		for start > 0 && m.query[start-1] != ' ' {
-			start--
-		}
-		m.query = append(m.query[:start:start], m.query[m.cursor:]...)
-		m.cursor = start
 	default:
-		if msg.Alt || (msg.Type != tea.KeyRunes && msg.Type != tea.KeySpace) {
+		if !editText(&m.query, &m.cursor, name, msg) {
 			return m, nil
 		}
-		// Pasted lines stay separate words.
-		text := []rune(textutil.Clean(pastedLines.Replace(string(msg.Runes))))
-		m.query = append(m.query[:m.cursor:m.cursor], append(text, m.query[m.cursor:]...)...)
-		m.cursor += len(text)
 	}
 	m.refresh(false)
 	return m, m.captureSelected()
+}
+
+// keyName is the name of a key. Typed text has none, because it can spell one.
+func keyName(msg tea.KeyMsg) string {
+	if msg.Type == tea.KeyRunes && !msg.Alt {
+		return ""
+	}
+	return msg.String()
+}
+
+// editText applies a key to a line of text, and says if the text changed.
+func editText(text *[]rune, cursor *int, name string, msg tea.KeyMsg) bool {
+	switch name {
+	case "left", "ctrl+b":
+		*cursor = max(*cursor-1, 0)
+		return false
+	case "right", "ctrl+f":
+		*cursor = min(*cursor+1, len(*text))
+		return false
+	case "ctrl+a":
+		*cursor = 0
+		return false
+	case "ctrl+e":
+		*cursor = len(*text)
+		return false
+	case "backspace":
+		if *cursor > 0 {
+			*text = append((*text)[:*cursor-1:*cursor-1], (*text)[*cursor:]...)
+			*cursor--
+		}
+	case "delete", "ctrl+d":
+		if *cursor < len(*text) {
+			*text = append((*text)[:*cursor:*cursor], (*text)[*cursor+1:]...)
+		}
+	case "ctrl+u":
+		*text, *cursor = nil, 0
+	case "ctrl+w":
+		start := *cursor
+		for start > 0 && (*text)[start-1] == ' ' {
+			start--
+		}
+		for start > 0 && (*text)[start-1] != ' ' {
+			start--
+		}
+		*text = append((*text)[:start:start], (*text)[*cursor:]...)
+		*cursor = start
+	default:
+		if msg.Alt || (msg.Type != tea.KeyRunes && msg.Type != tea.KeySpace) {
+			return false
+		}
+		// Pasted lines stay separate words.
+		typed := []rune(textutil.Clean(pastedLines.Replace(string(msg.Runes))))
+		*text = append((*text)[:*cursor:*cursor], append(typed, (*text)[*cursor:]...)...)
+		*cursor += len(typed)
+	}
+	return true
+}
+
+// startAnswer begins an answer to the selected pane, if it is an agent that can take one.
+func (m *model) startAnswer() tea.Cmd {
+	r, ok := m.current()
+	if !ok || r.Skill != nil || r.Action != nil {
+		return nil
+	}
+	p := r.Pane
+	switch {
+	case p.Status.Kind == "auth":
+		m.notice = "It wants a password. Press Enter to go to its pane and type it there"
+	case p.Status.State != rex.StateBlocked && p.Conversation == nil:
+		m.notice = "Only an agent can take an answer here"
+	default:
+		m.answering, m.answerText, m.answerCursor = &p, nil, 0
+		m.previewTop = 0
+		return m.captureSelected()
+	}
+	return nil
+}
+
+// onMenu says if the agent waits on a menu, which only takes a number. Text and then
+// Enter would pick its default option.
+func (m *model) onMenu() bool {
+	return m.answering.Status.State == rex.StateBlocked
+}
+
+func (m *model) answerKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	name := keyName(msg)
+	switch name {
+	case "esc", "ctrl+c":
+		m.answering = nil
+		return m, m.captureSelected()
+	case "enter":
+		if m.onMenu() {
+			m.chosen, m.answering = m.answering, nil // Only its pane can take this.
+			return m, tea.Quit
+		}
+		if len(m.answerText) == 0 {
+			return m, nil
+		}
+		return m, m.send(rex.Answer{Text: string(m.answerText), Seen: m.answering.Status})
+	}
+	if m.onMenu() {
+		if text := string(msg.Runes); msg.Type == tea.KeyRunes && !msg.Alt && len(text) == 1 && text[0] >= '1' && text[0] <= '9' {
+			return m, m.send(rex.Answer{Key: text, Seen: m.answering.Status})
+		}
+		return m, nil
+	}
+	editText(&m.answerText, &m.answerCursor, name, msg)
+	return m, nil
+}
+
+// send ends the answer and delivers it. The picker stays open for the next agent.
+func (m *model) send(a rex.Answer) tea.Cmd {
+	answer, p := m.answer, *m.answering
+	m.answering = nil
+	return func() tea.Msg {
+		return answeredMsg{p, answer(p, a)}
+	}
+}
+
+// readStatuses asks the panes what they are doing. Only one read runs at a time.
+func (m *model) readStatuses() tea.Cmd {
+	if m.readingStatus || len(m.panes) == 0 {
+		return nil
+	}
+	m.readingStatus = true
+	load, panes := m.loadStatuses, m.panes
+	return func() tea.Msg { return statusesMsg{load(panes)} }
+}
+
+func (m *model) applyStatuses(statuses map[string]rex.Status) {
+	for i := range m.panes {
+		if s, ok := statuses[m.panes[i].Block]; ok {
+			m.panes[i].Status = s
+		}
+	}
 }
 
 // refresh searches again. If the query is the same and only the text changed, the
@@ -375,7 +522,11 @@ func (m *model) words() []string {
 
 // showsScreen says if the preview of a row is the pane's screen.
 func (m *model) showsScreen(r search.Result) bool {
-	return r.Action == nil && r.Skill == nil && (len(m.words()) == 0 || r.Matches() == 0)
+	if r.Action != nil || r.Skill != nil {
+		return false
+	}
+	// To answer an agent, the person must see what it asks.
+	return m.answering != nil || len(m.words()) == 0 || r.Matches() == 0
 }
 
 // captureSelected reads the screen of the selected pane, if the preview shows it.

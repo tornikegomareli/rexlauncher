@@ -26,12 +26,15 @@ type Match struct {
 type Reason int
 
 const (
-	reasonRecent Reason = iota // An empty query: its conversation changed last.
-	reasonName                 // Its name holds the words, or an empty query.
-	ReasonSkill                // A skill, and not a pane.
-	ReasonAction               // An action, and not a pane.
-	reasonSaid                 // Its conversation holds the words.
-	reasonScreen               // Its screen holds the words.
+	reasonNeeds    Reason = iota // An empty query: its program is blocked or failed.
+	reasonFinished               // An empty query: its program finished, and nobody looked yet.
+	reasonWorking                // An empty query: its program is at work.
+	reasonRecent                 // An empty query: its conversation changed last.
+	reasonName                   // Its name holds the words, or an empty query.
+	ReasonSkill                  // A skill, and not a pane.
+	ReasonAction                 // An action, and not a pane.
+	reasonSaid                   // Its conversation holds the words.
+	reasonScreen                 // Its screen holds the words.
 )
 
 // Result is one row of the picker: a skill, an action, or a pane. There is one for each
@@ -73,6 +76,12 @@ func (r Result) Heading() string {
 		return "Partial matches"
 	}
 	switch r.Reason {
+	case reasonNeeds:
+		return "Needs you"
+	case reasonFinished:
+		return "Finished"
+	case reasonWorking:
+		return "Working"
 	case reasonRecent:
 		return "Recent conversations"
 	case reasonName:
@@ -111,6 +120,9 @@ type Filter struct {
 
 var Filters = []Filter{
 	{"All", func(Result, bool) bool { return true }},
+	{"Needs you", func(r Result, _ bool) bool {
+		return r.Pane.Status.Needs() || r.Pane.Status.State == rex.StateDone
+	}},
 	{"Panes", func(r Result, _ bool) bool { return r.Named }},
 	{"Conversations", func(r Result, empty bool) bool {
 		return r.Pane.Conversation != nil && (empty || r.Matches() > 0)
@@ -124,14 +136,16 @@ var Filters = []Filter{
 
 const (
 	AllTab     = 0
-	SkillsTab  = 4
-	ActionsTab = 5
+	NeedsTab   = 1
+	SkillsTab  = 5
+	ActionsTab = 6
 )
 
 // search finds panes by name first, then by the words said in their
 // conversations, the newest first, then by the text of their screens. All the
 // words of the query must be in the same message or line. A pane where they only
 // occur inside other words comes after all the others. An empty query lists the
+// panes that need the person, then what finished and what is at work, then the
 // conversations that changed last, and then the other panes.
 func Search(panes []rex.Pane, query string) []Result {
 	words := strings.Fields(textutil.Lower(query))
@@ -140,7 +154,7 @@ func Search(panes []rex.Pane, query string) []Result {
 	}
 	var results []Result
 	for _, p := range panes {
-		name := textutil.Lower(p.SessionLabel + " " + p.WindowLabel + " " + p.Name + " " + ShortHome(p.Cwd))
+		name := textutil.Lower(p.SessionLabel + " " + p.WindowLabel + " " + p.Name + " " + ShortHome(p.Cwd) + " " + p.Status.Message)
 		named := containsAll(name, words)
 		found := matchesOf(p, words)
 		letters := lettersOf(textutil.Clean(p.Title()), words) // Positions in the name as drawn.
@@ -169,15 +183,30 @@ func Search(panes []rex.Pane, query string) []Result {
 func listAll(panes []rex.Pane) []Result {
 	results := make([]Result, len(panes))
 	for i, p := range panes {
-		results[i] = Result{Pane: p, Reason: reasonName, Named: true}
-		if !p.Active().IsZero() && !p.Here {
-			results[i].Reason, results[i].at = reasonRecent, p.Active().UTC().Format(time.RFC3339Nano)
+		r := Result{Pane: p, Reason: reasonName, Named: true}
+		at := p.Status.At.UTC().Format(time.RFC3339Nano)
+		switch {
+		case p.From:
+			// It is behind the picker, and the person just came from it.
+		case p.Status.Needs():
+			r.Reason, r.at = reasonNeeds, at
+		case p.Status.State == rex.StateDone:
+			r.Reason, r.at = reasonFinished, at
+		case p.Status.State == rex.StateWorking:
+			r.Reason, r.at = reasonWorking, at
+		case !p.Active().IsZero() && !p.Here:
+			r.Reason, r.at = reasonRecent, p.Active().UTC().Format(time.RFC3339Nano)
 		}
+		results[i] = r
 	}
 	sort.SliceStable(results, func(i, j int) bool { return results[i].before(results[j]) })
-	for i := maxRecent; i < len(results); i++ {
-		if results[i].Reason == reasonRecent {
-			results[i].Reason = reasonName // Too old for the section, so it joins the panes.
+	// Only what needs the person has no limit. Too old for its section, a pane joins the panes.
+	shown := map[Reason]int{}
+	for i := range results {
+		if r := &results[i]; r.Reason == reasonFinished || r.Reason == reasonRecent {
+			if shown[r.Reason]++; shown[r.Reason] > maxRecent {
+				r.Reason = reasonName
+			}
 		}
 	}
 	sort.SliceStable(results, func(i, j int) bool { return results[i].Reason < results[j].Reason })

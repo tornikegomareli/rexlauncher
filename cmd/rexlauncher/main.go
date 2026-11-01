@@ -59,15 +59,19 @@ func pick(client, block string) error {
 	}
 	choice, err := picker.Run(picker.Sources{
 		Panes: func() ([]rex.Pane, error) {
-			return search.LoadPanes(os.Getenv("REX_BLOCK"), conversations.ClaudeDir())
+			return search.LoadPanes(os.Getenv("REX_BLOCK"), block, conversations.ClaudeDir())
 		},
 		Text: func(panes []rex.Pane) []rex.Pane {
 			conversations.Prune(index)
 			return search.LoadText(panes, index)
 		},
-		Screen:  rex.Capture,
-		Actions: func() ([]rex.Action, error) { return rex.LoadActions(client) },
-		Skills:  func() (skills.Installed, error) { return loadSkills(session, block) },
+		Screen:   rex.Capture,
+		Actions:  func() ([]rex.Action, error) { return rex.LoadActions(client) },
+		Skills:   func() (skills.Installed, error) { return loadSkills(session, block) },
+		Statuses: rex.ReadStatuses,
+		Answer: func(p rex.Pane, a rex.Answer) error {
+			return rex.Deliver(p.Session, p.Block, a)
+		},
 	})
 	if err != nil {
 		return err

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
+	"github.com/tornikegomareli/rexlauncher/internal/rex"
 	"github.com/tornikegomareli/rexlauncher/internal/search"
 	"github.com/tornikegomareli/rexlauncher/internal/skills"
 	"github.com/tornikegomareli/rexlauncher/internal/textutil"
@@ -13,6 +14,8 @@ import (
 
 const (
 	maxInPreview = 20
+	// Below this width, the footer has no room for the hint to answer.
+	answerHintWidth = 56
 
 	// Characters of text around a match. A row keeps few before it, because it is
 	// cut at its end, and the match must stay in view.
@@ -95,6 +98,9 @@ func (m *model) ruleLine(width int) string {
 
 // headerLine is the query with its cursor, and the state of the picker on the right.
 func (m *model) headerLine(width int) string {
+	if m.answering != nil {
+		return m.answerLine(width)
+	}
 	state := m.count()
 	if !m.textLoaded {
 		state = "Reading conversations…"
@@ -120,6 +126,43 @@ func (m *model) headerLine(width int) string {
 	return paint(spans, "49", width)
 }
 
+// answerLine replaces the query while the person answers an agent.
+func (m *model) answerLine(width int) string {
+	name := cut(textutil.Clean(m.answering.Title()), width/3)
+	if m.onMenu() {
+		return paint([]span{{" Press a number to choose, for ", styleDim}, {name, styleBold}}, "49", width)
+	}
+	spans := []span{{" Answer ", styleDim}, {name, styleBold}, {" › ", styleAccent}}
+	before, after := string(m.answerText[:m.answerCursor]), string(m.answerText[m.answerCursor:])
+	spans = append(spans, span{before, ""})
+	if after == "" {
+		return paint(append(spans, span{" ", "7"}), "49", width)
+	}
+	first := []rune(after)
+	return paint(append(spans, span{string(first[:1]), "7"}, span{string(first[1:]), ""}), "49", width)
+}
+
+// statusLabel names what a program is doing in a word, in the color it deserves.
+func statusLabel(s rex.Status) (string, string) {
+	switch s.State {
+	case rex.StateBlocked:
+		if s.Kind != "" {
+			return s.Kind, styleBlocked
+		}
+		return "blocked", styleBlocked
+	case rex.StateError:
+		return "error", styleError
+	case rex.StateDone:
+		return "done", styleDone
+	case rex.StateWorking:
+		if s.Progress != nil {
+			return fmt.Sprintf("working %d%%", *s.Progress), styleAccent
+		}
+		return "working", styleAccent
+	}
+	return "", ""
+}
+
 // count says how many rows there are, in the word for what they are.
 func (m *model) count() string {
 	rows, noun := m.visible(), "pane"
@@ -129,6 +172,8 @@ func (m *model) count() string {
 		}
 	}
 	switch m.filter {
+	case search.NeedsTab:
+		return fmt.Sprintf("%d to look at", len(rows))
 	case search.ActionsTab:
 		noun = "action"
 	case search.SkillsTab:
@@ -164,6 +209,8 @@ func (m *model) listLines(width, height int) []string {
 			text = textutil.Clean(m.actionsErr.Error())
 		case m.filter == search.ActionsTab:
 			text = "No action has these words"
+		case m.filter == search.NeedsTab:
+			text = "Nothing needs you"
 		case m.filter == search.SkillsTab:
 			text = m.noSkills()
 		case len(m.panes) == 0 && !m.textLoaded:
@@ -244,10 +291,19 @@ func (m *model) rowLine(r search.Result, width int, selected bool) string {
 		spans = append(spans, marked(title, words, styleBold)...)
 	}
 	room -= ansi.StringWidth(title)
+	if label, style := statusLabel(r.Pane.Status); label != "" && room > ansi.StringWidth(label)+2 {
+		if selected {
+			style = styleBold // Colors of the palette can vanish on the selected row.
+		}
+		spans = append(spans, span{"  ", ""}, span{label, style})
+		room -= ansi.StringWidth(label) + 2
+	}
 
 	accessory := ""
 	if r.Matches() > 1 {
 		accessory = fmt.Sprintf("%d matches", r.Matches())
+	} else if len(words) == 0 && !r.Pane.Status.At.IsZero() && r.Pane.Status.State != rex.StateIdle {
+		accessory = age(r.Pane.Status.At, time.Now())
 	} else if len(words) == 0 && !r.Pane.Active().IsZero() {
 		accessory = age(r.Pane.Active(), time.Now())
 	}
@@ -263,6 +319,9 @@ func (m *model) rowLine(r search.Result, width int, selected bool) string {
 		case len(words) > 0 && r.Matches() > 0:
 			best = &r.Found[0].Entry
 			text = search.Around(best.Text, words[0], rowBefore, rowLength)
+		case len(words) == 0 && r.Pane.Status.Message != "":
+			best = &textutil.Entry{Text: textutil.Clean(r.Pane.Status.Message)}
+			text = best.Text
 		case len(words) == 0 && r.Pane.Conversation != nil && len(r.Pane.Text) > 0:
 			best = &r.Pane.Text[0]
 			text = best.Text
@@ -302,7 +361,26 @@ func (m *model) previewLines(width, height int) []string {
 			m.detail("Category", textutil.Clean(r.Action.Category), width),
 		)
 	} else if ok {
-		room := max(height-metadataRows-1, 0)
+		var details []string
+		if label, _ := statusLabel(r.Pane.Status); label != "" {
+			details = append(details, m.detail("Status", label, width))
+			if r.Pane.Status.Message != "" {
+				details = append(details, m.detail("Says", textutil.Clean(r.Pane.Status.Message), width))
+			}
+		}
+		details = append(details, m.detail("Session", textutil.Clean(r.Pane.SessionLabel), width))
+		if r.Pane.WindowLabel != "" {
+			details = append(details, m.detail("Window", textutil.Clean(r.Pane.WindowLabel), width))
+		}
+		if r.Pane.Cwd != "" {
+			details = append(details, m.detail("Folder", textutil.Clean(search.ShortHome(r.Pane.Cwd)), width))
+		}
+		if r.Matches() > 0 {
+			details = append(details, m.detail("Matches", fmt.Sprint(r.Matches()), width))
+		} else if !r.Pane.Active().IsZero() {
+			details = append(details, m.detail("Active", ago(r.Pane.Active()), width))
+		}
+		room := max(height-len(details)-1, 0)
 		var content []string
 		if m.showsScreen(r) {
 			content = m.screenLines(r, width, room)
@@ -314,18 +392,7 @@ func (m *model) previewLines(width, height int) []string {
 			lines = append(lines, strings.Repeat(" ", width))
 		}
 		lines = append(lines, "\x1b[2m"+strings.Repeat("─", width)+"\x1b[0m")
-		lines = append(lines, m.detail("Session", textutil.Clean(r.Pane.SessionLabel), width))
-		if r.Pane.WindowLabel != "" {
-			lines = append(lines, m.detail("Window", textutil.Clean(r.Pane.WindowLabel), width))
-		}
-		if r.Pane.Cwd != "" {
-			lines = append(lines, m.detail("Folder", textutil.Clean(search.ShortHome(r.Pane.Cwd)), width))
-		}
-		if r.Matches() > 0 {
-			lines = append(lines, m.detail("Matches", fmt.Sprint(r.Matches()), width))
-		} else if !r.Pane.Active().IsZero() {
-			lines = append(lines, m.detail("Active", ago(r.Pane.Active()), width))
-		}
+		lines = append(lines, details...)
 	}
 	for len(lines) < height {
 		lines = append(lines, strings.Repeat(" ", width))
@@ -407,16 +474,32 @@ func (m *model) matchLines(r search.Result, width int) []string {
 }
 
 func (m *model) footerLine(width int) string {
+	if m.notice != "" {
+		return paint([]span{{" " + cut(m.notice, width-2), styleBold}}, "49", width)
+	}
+	if m.answering != nil {
+		if m.onMenu() {
+			return paint([]span{{" 1-9", styleBold}, {" Choose   ", styleDim}, {"↵", styleBold}, {" Go to pane   ", styleDim}, {"esc", styleBold}, {" Back", styleDim}}, "49", width)
+		}
+		return paint([]span{{" ↵", styleBold}, {" Send   ", styleDim}, {"esc", styleBold}, {" Back", styleDim}}, "49", width)
+	}
 	enter := " Go to pane   "
+	canAnswer := false
 	if r, ok := m.current(); ok {
 		switch {
 		case r.Skill != nil:
 			enter = " Put in prompt   "
 		case r.Action != nil:
 			enter = " Run action   "
+		default:
+			canAnswer = r.Pane.Status.State == rex.StateBlocked && r.Pane.Status.Kind != "auth" || r.Pane.Conversation != nil && r.Pane.Status.Kind != "auth"
 		}
 	}
-	spans := []span{{" ↵", styleBold}, {enter, styleDim}, {"tab", styleBold}, {" Filter   ", styleDim}, {"esc", styleBold}, {" Close", styleDim}}
+	spans := []span{{" ↵", styleBold}, {enter, styleDim}}
+	if canAnswer && width >= answerHintWidth {
+		spans = append(spans, span{"^r", styleBold}, span{" Answer   ", styleDim})
+	}
+	spans = append(spans, span{"tab", styleBold}, span{" Filter   ", styleDim}, span{"esc", styleBold}, span{" Close", styleDim})
 	used := 0
 	for _, s := range spans {
 		used += ansi.StringWidth(s.text)

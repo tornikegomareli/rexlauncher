@@ -63,7 +63,7 @@ func TestLoadTextReadsAConversationFromItsPane(t *testing.T) {
 		}}}},
 	})
 	liveSession(t, claude, block, "conv", "interactive", "Fix it", userLine("zebrafish"))
-	panes, err := LoadPanes("", claude)
+	panes, err := LoadPanes("", "", claude)
 	if err != nil {
 		t.Fatal(err)
 	}

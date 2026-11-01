@@ -344,3 +344,67 @@ func TestAllPutsSkillsAfterPanesAndBeforeActionsAndConversations(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func waiting(block, state string, at time.Time) rex.Pane {
+	return rex.Pane{Block: block, Name: block, Status: rex.Status{State: state, At: at}}
+}
+
+func TestAnEmptyQueryPutsWhatNeedsThePersonFirst(t *testing.T) {
+	now := time.Now()
+	rows := Search([]rex.Pane{
+		{Block: "plain", Name: "plain"},
+		{Block: "recent", Name: "recent", Conversation: &conversations.Conversation{Active: now}},
+		waiting("working", rex.StateWorking, now),
+		waiting("done", rex.StateDone, now),
+		waiting("error", rex.StateError, now.Add(-time.Minute)),
+		waiting("blocked", rex.StateBlocked, now),
+		waiting("idle", rex.StateIdle, now),
+	}, "")
+	var got []string
+	for _, r := range rows {
+		got = append(got, r.Heading()+":"+r.Pane.Block)
+	}
+	want := "Needs you:blocked|Needs you:error|Finished:done|Working:working|Recent conversations:recent|Panes:plain|Panes:idle"
+	if strings.Join(got, "|") != want {
+		t.Fatalf("got %q", strings.Join(got, "|"))
+	}
+}
+
+func TestABlockedPaneInThePickersWindowStillNeedsThePerson(t *testing.T) {
+	here := waiting("here", rex.StateBlocked, time.Now())
+	here.Here = true
+	if rows := Search([]rex.Pane{here}, ""); rows[0].Heading() != "Needs you" {
+		t.Fatalf("got %q", rows[0].Heading())
+	}
+}
+
+func TestThePaneThePickerOpenedFromIsLeftOutOfTheInbox(t *testing.T) {
+	from := waiting("from", rex.StateBlocked, time.Now())
+	from.From = true
+	if rows := Search([]rex.Pane{from}, ""); rows[0].Heading() != "Panes" {
+		t.Fatalf("got %q", rows[0].Heading())
+	}
+}
+
+func TestFinishedPanesAreLimited(t *testing.T) {
+	var panes []rex.Pane
+	for i := range maxRecent + 3 {
+		panes = append(panes, waiting(fmt.Sprint(i), rex.StateDone, time.Now()))
+	}
+	finished := 0
+	for _, r := range Search(panes, "") {
+		if r.Heading() == "Finished" {
+			finished++
+		}
+	}
+	if finished != maxRecent {
+		t.Fatalf("%d finished", finished)
+	}
+}
+
+func TestAStatusMessageIsSearched(t *testing.T) {
+	p := rex.Pane{Block: "b", Name: "agent", Status: rex.Status{State: rex.StateBlocked, Message: "Allow terraform apply?"}}
+	if rows := Search([]rex.Pane{p}, "terraform"); len(rows) != 1 {
+		t.Fatalf("got %+v", rows)
+	}
+}
