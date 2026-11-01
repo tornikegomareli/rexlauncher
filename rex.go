@@ -263,6 +263,18 @@ func describePane(p *pane) {
 	if blockMethod(*p, "pwd", &pwd) == nil {
 		p.Cwd = pathFromFileURL(pwd.Pwd)
 	}
+	if p.Cwd != "" {
+		return
+	}
+	// Only a shell set up for it reports its folder. Rex can also ask the system.
+	var process struct {
+		Foreground struct {
+			Cwd string `json:"cwd"`
+		} `json:"foreground"`
+	}
+	if blockMethod(*p, "process", &process) == nil {
+		p.Cwd = process.Foreground.Cwd
+	}
 }
 
 func blockMethod(p pane, method string, output any) error {

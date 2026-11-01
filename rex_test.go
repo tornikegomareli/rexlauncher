@@ -208,3 +208,19 @@ func TestARexCommandThatHangsEnds(t *testing.T) {
 		t.Fatalf("took %s", took)
 	}
 }
+
+func TestAPaneWhoseShellReportsNoFolderStillHasOne(t *testing.T) {
+	answers := twoSessions()
+	answers["block.method.b3.process"] = block{"foreground": block{"cwd": "/code/infra"}}
+	fakeRex(t, answers)
+	panes, err := listPanes("self")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := panes[2]; got.Block != "b3" || got.Cwd != "/code/infra" {
+		t.Fatalf("got %+v", got)
+	}
+	if got := panes[0].Cwd; got != "/code/my app" {
+		t.Fatalf("the reported folder comes first: %q", got)
+	}
+}
