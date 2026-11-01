@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -132,6 +134,50 @@ func TestPruneIndexKeepsRecentOnes(t *testing.T) {
 	for name, want := range map[string]bool{"old.txt": false, "old.offset": false, "new.txt": true, "new.offset": true} {
 		if _, err := os.Stat(filepath.Join(dir, name)); (err == nil) != want {
 			t.Errorf("%s: exists = %v, want %v", name, err == nil, want)
+		}
+	}
+}
+
+// Closing the picker while it reads conversations ends the process in the middle of
+// a write. The index must not keep half a line, or the same messages twice.
+func TestAKilledIndexWriteLeavesTheIndexUsable(t *testing.T) {
+	const variable = "REXLAUNCHER_TEST_INDEX_DIR"
+	if dir := os.Getenv(variable); dir != "" {
+		updateIndex(dir, "c", filepath.Join(dir, "t.jsonl"))
+		return
+	}
+	dir := t.TempDir()
+	transcript := filepath.Join(dir, "t.jsonl")
+	const messages = 150000
+	var content strings.Builder
+	for i := range messages {
+		content.WriteString(userLine(fmt.Sprintf("message number %d with some words in it", i)))
+	}
+	if err := os.WriteFile(transcript, []byte(content.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, delay := range []time.Duration{30, 60, 90, 120, 180, 240} {
+		child := exec.Command(os.Args[0], "-test.run=^TestAKilledIndexWriteLeavesTheIndexUsable$")
+		child.Env = append(os.Environ(), variable+"="+dir)
+		if err := child.Start(); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(delay * time.Millisecond)
+		child.Process.Kill()
+		child.Wait()
+	}
+
+	path, err := updateIndex(dir, "c", transcript)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := readLines(path)
+	if len(lines) != messages {
+		t.Errorf("%d lines, want %d", len(lines), messages)
+	}
+	for _, line := range lines {
+		if strings.Count(line, "message number") != 1 {
+			t.Fatalf("a broken line: %q", line)
 		}
 	}
 }

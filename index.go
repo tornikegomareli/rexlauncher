@@ -5,10 +5,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -21,6 +21,9 @@ import (
 // indexMaxAge is how long the index of a conversation stays after its last use.
 // It holds a copy of the conversation, so it should not stay for ever.
 const indexMaxAge = 30 * 24 * time.Hour
+
+// tmpPrefix starts the name of an index that is still being written.
+const tmpPrefix = ".writing-"
 
 type message struct {
 	Role string
@@ -112,22 +115,22 @@ func updateIndex(dir, id, transcript string) (string, error) {
 		return "", err
 	}
 
-	offset := readOffset(offsetPath)
-	flags := os.O_WRONLY | os.O_CREATE | os.O_APPEND
-	if offset > info.Size() {
-		offset = 0 // The transcript was replaced, so its old offset means nothing.
-		flags = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	offset, size := readOffset(offsetPath)
+	var index bytes.Buffer
+	kept, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
 	}
+	// The transcript was replaced, or the index is not what the offset describes.
+	if offset > info.Size() || int64(len(kept)) < size {
+		offset, size = 0, 0
+	}
+	index.Write(kept[:size]) // More than size is what a killed process wrote last.
 	if _, err := in.Seek(offset, io.SeekStart); err != nil {
 		return "", err
 	}
-	out, err := os.OpenFile(path, flags, 0o600)
-	if err != nil {
-		return "", err
-	}
-	defer out.Close()
 
-	writer := bufio.NewWriter(out)
+	before := index.Len()
 	reader := bufio.NewReaderSize(in, 1<<20)
 	for {
 		line, err := reader.ReadBytes('\n')
@@ -139,33 +142,61 @@ func updateIndex(dir, id, transcript string) (string, error) {
 		}
 		offset += int64(len(line))
 		if m, ok := extractMessage(line); ok {
-			if _, err := writer.WriteString(m.line()); err != nil {
-				return "", err
-			}
+			index.WriteString(m.line())
 		}
 	}
-	if err := writer.Flush(); err != nil {
-		return "", err
+	// A rename, because closing the picker can end this process at any moment. The
+	// offset names the size of the index it describes, so it stays true until it is
+	// saved too.
+	if index.Len() > before || size == 0 {
+		if err := writeFileAtomic(path, index.Bytes()); err != nil {
+			return "", err
+		}
 	}
 	now := time.Now()
 	os.Chtimes(path, now, now) // Keeps it from pruneIndex while it is in use.
-	return path, os.WriteFile(offsetPath, []byte(strconv.FormatInt(offset, 10)), 0o600)
+	return path, writeFileAtomic(offsetPath, fmt.Appendf(nil, "%d %d", offset, index.Len()))
 }
 
-func readOffset(path string) int64 {
+func writeFileAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), tmpPrefix+"*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name()) // No effect once the rename has happened.
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), path)
+}
+
+// readOffset returns how far the transcript was read, and the size of the index
+// at that point. Anything it cannot read means to start again.
+func readOffset(path string) (offset, size int64) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return 0
+		return 0, 0
 	}
-	offset, err := strconv.ParseInt(strings.TrimSpace(string(data)), 10, 64)
-	if err != nil {
-		return 0
+	if _, err := fmt.Sscanf(string(data), "%d %d", &offset, &size); err != nil {
+		return 0, 0
 	}
-	return offset
+	return offset, size
 }
 
 // pruneIndex deletes the indexes of conversations not used for indexMaxAge.
 func pruneIndex(dir string) {
+	// What a process that was ended left behind. Another picker can be writing, so
+	// only old ones go.
+	temporary, _ := filepath.Glob(filepath.Join(dir, tmpPrefix+"*"))
+	for _, path := range temporary {
+		if info, err := os.Stat(path); err == nil && time.Since(info.ModTime()) > time.Hour {
+			os.Remove(path)
+		}
+	}
 	paths, _ := filepath.Glob(filepath.Join(dir, "*.txt"))
 	for _, path := range paths {
 		info, err := os.Stat(path)
