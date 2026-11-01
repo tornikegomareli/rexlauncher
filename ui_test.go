@@ -688,3 +688,11 @@ func TestAConversationKeepsItsOwnName(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestPastedLinesStaySeparateWords(t *testing.T) {
+	m := open(t, 120, 30, demoPanes(t)...)
+	send(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("error: foo\nline two\r\nend"), Paste: true})
+	if got := string(m.query); got != "error: foo line two end" {
+		t.Fatalf("got %q", got)
+	}
+}

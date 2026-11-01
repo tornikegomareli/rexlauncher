@@ -154,6 +154,8 @@ func (m *model) mouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+var pastedLines = strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ", "\t", " ")
+
 func (m *model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	name := msg.String()
 	if msg.Type == tea.KeyRunes && !msg.Alt {
@@ -227,7 +229,8 @@ func (m *model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if msg.Alt || (msg.Type != tea.KeyRunes && msg.Type != tea.KeySpace) {
 			return m, nil
 		}
-		text := []rune(clean(string(msg.Runes)))
+		// Pasted lines stay separate words.
+		text := []rune(clean(pastedLines.Replace(string(msg.Runes))))
 		m.query = append(m.query[:m.cursor:m.cursor], append(text, m.query[m.cursor:]...)...)
 		m.cursor += len(text)
 	}
