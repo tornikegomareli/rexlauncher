@@ -1,6 +1,6 @@
 <h1 align="center">Rex Launcher</h1>
 
-<h3 align="center">Find any Rex pane by what was said in it, and run any Rex action.</h3>
+<h3 align="center">Find any Rex pane by what was said in it, run any Rex action, and put any skill in your agent's prompt.</h3>
 
 <p align="center">
   <img src=".github/assets/hero.png" width="100%" alt="Rex Launcher open over a dark Rex window. It lists recent conversations with their last message, then the other panes, and the preview on the right shows the live screen of the selected pane" />
@@ -14,6 +14,7 @@ Rex Launcher is one search box for everything in [Rex](https://www.superlogical.
 | A word you remember from a Claude Code conversation | Goes to the pane with that conversation, and the preview shows the message |
 | A word on any pane's screen, such as an error | Goes to that pane |
 | An action, such as `split d`, `theme` or `sidebar` | Runs it on the pane you were on |
+| A skill of the agent you were in, such as `review` | Puts `/code-review` in that agent's prompt |
 
 It is a [rexd](https://github.com/tornikegomareli/rexd) plugin.
 
@@ -52,9 +53,9 @@ rex.bind("cmd+shift+k", has_launcher and "rexlauncher" or "session.switch")
 | Search | Type |
 | Move in the list | Up, Down, Ctrl+P, Ctrl+N |
 | Move by a page, or to the first or last row | PageUp, PageDown, Home, End |
-| Go to the selected pane, or run the selected action | Enter, or click the selected row |
-| Filter: All, Panes, Conversations, Screens, Actions | Tab, Shift+Tab |
-| Scroll the matches in the preview | Shift+Up, Shift+Down, or the wheel |
+| Go to the selected pane, run the selected action, or put the selected skill in the prompt | Enter, or click the selected row |
+| Filter: All, Panes, Conversations, Screens, Skills, Actions | Tab, Shift+Tab |
+| Scroll the preview | Shift+Up, Shift+Down, or the wheel |
 | Delete a word, or the whole query | Ctrl+W, Ctrl+U |
 | Close | Esc |
 
@@ -83,6 +84,24 @@ An action runs on the pane you were on when you opened the picker.
 With a query, the All tab shows up to 4 actions, below the panes with that name and above the conversations. The Actions tab lists all of them.
 
 It leaves out actions that close or restart something, such as Close Pane, because Enter runs the first row, and a word you type to find a conversation can match their titles. It also leaves out actions that need an argument. Rex's palette has both.
+
+## Skills
+
+Open the picker from a pane that runs an agent, and the Skills tab lists what that agent can run. The preview shows what the selected skill does, where it comes from, and the rest of its frontmatter.
+
+Enter puts the name in the prompt of the pane you were on, with a space after it, and sends nothing. You can add arguments, and you press Enter yourself. The text goes where the prompt's cursor is, so a draft stays.
+
+| Agent | Enter puts | Where the list comes from |
+| --- | --- | --- |
+| Claude Code | `/name`, or `/plugin:name` | Your skills and commands in `~/.claude`, those of the project, and the plugins that are on |
+| Codex | `$name` | Codex, through `codex app-server`. Skills that are off stay out |
+| pi | `/skill:name` | pi, through `pi --mode rpc`, without its extensions |
+
+For Codex and pi, the plugin starts a second copy for a moment to ask. It does not affect the agent in your pane.
+
+With a query, the All tab shows up to 4 skills, below the panes with that name. The Skills tab lists all of them. A pane with no agent has no skills, and the tab says so.
+
+Claude Code has no command that lists its skills, so the plugin reads the same folders. It leaves out skills from your claude.ai account, enterprise skills, and Claude Code's own commands, such as `/clear`.
 
 ## What it searches
 
@@ -124,7 +143,8 @@ make e2e     # against a Rex server of its own
 | `internal/picker` | The screen: the query, the rows and the preview |
 | `internal/search` | What finds panes and actions, and their order |
 | `internal/rex` | Everything it asks the `rex` command |
-| `internal/conversations` | Everything it knows about Claude Code's files |
+| `internal/conversations` | Everything it knows about Claude Code's conversations |
+| `internal/skills` | What finds the skills of Claude Code, Codex and pi |
 | `rex/config.lua` | The action and the key, loaded into Rex's config |
 | `e2e` | Tests against a real Rex |
 

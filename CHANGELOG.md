@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.0
+
+- Search the skills of the agent you opened the picker from: Claude Code, Codex or pi. The preview shows the description and the frontmatter of a skill, and Enter puts its name in the prompt, with nothing sent.
+- A pane with a Claude Code conversation now shows the conversation's title, and no longer a name such as `rexd-82` that Claude Code made up.
+
 ## 0.1.0
 
 The first version.
