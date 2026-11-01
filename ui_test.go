@@ -477,7 +477,7 @@ func TestTheWheelMovesTheListOrThePreview(t *testing.T) {
 
 func TestAnEmptyQueryShowsWhatEachConversationSaidLast(t *testing.T) {
 	p := talking(t, "a", "x", said("user", "first"), said("assistant", "the last message"))
-	p.Active, p.Cwd = time.Now().Add(-5*time.Minute), "/code/x"
+	p.Conversation.Active, p.Cwd = time.Now().Add(-5*time.Minute), "/code/x"
 	m := open(t, 120, 30, p)
 	out := view(m)
 	for _, want := range []string{"Recent conversations", "the last message", "5m", "Active   5m ago", "Folder   /code/x"} {

@@ -14,8 +14,6 @@ import (
 	"time"
 )
 
-const stayAliveVariable = "REXLAUNCHER_TEST_STAY_ALIVE"
-
 func TestMain(m *testing.M) {
 	if os.Getenv(stayAliveVariable) != "" {
 		time.Sleep(2 * time.Minute)
@@ -153,11 +151,11 @@ func TestFindsAPaneByNameByWhatWasSaidAndByItsScreen(t *testing.T) {
 
 	take := func() []pane {
 		t.Helper()
-		panes, conversations, err := loadPanes("", claude)
+		panes, err := loadPanes("", claude)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return loadText(panes, conversations, cache)
+		return loadText(panes, cache)
 	}
 
 	// The shell prints after a moment, and the snapshot is fixed when taken.
@@ -222,7 +220,7 @@ func TestFindsAPaneByNameByWhatWasSaidAndByItsScreen(t *testing.T) {
 	if here != 1 {
 		t.Errorf("%d panes here", here)
 	}
-	panes, _, err = loadPanes(shell.Block, claude)
+	panes, err = loadPanes(shell.Block, claude)
 	if err != nil {
 		t.Fatal(err)
 	}

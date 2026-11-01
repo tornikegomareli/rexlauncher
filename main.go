@@ -49,16 +49,11 @@ func pick(client string) error {
 	if err != nil {
 		return err
 	}
-	var conversations map[string]conversation
 	picker := &model{
-		loadPanes: func() ([]pane, error) {
-			panes, found, err := loadPanes(os.Getenv("REX_BLOCK"), claudeDir())
-			conversations = found
-			return panes, err
-		},
+		loadPanes: func() ([]pane, error) { return loadPanes(os.Getenv("REX_BLOCK"), claudeDir()) },
 		loadText: func(panes []pane) []pane {
 			pruneIndex(index)
-			return loadText(panes, conversations, index)
+			return loadText(panes, index)
 		},
 		capture: captureScreen,
 	}

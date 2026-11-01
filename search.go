@@ -36,28 +36,6 @@ type entry struct {
 	At    string
 }
 
-// messageEntries reads an index, the newest message first. Identical messages
-// count once.
-func messageEntries(path string) []entry {
-	lines := readLines(path)
-	seen := map[string]bool{}
-	var entries []entry
-	for i := len(lines) - 1; i >= 0; i-- {
-		message := parseMessage(lines[i])
-		text := clean(plain(message.Text))
-		if text == "" || seen[text] {
-			continue
-		}
-		seen[text] = true
-		e := entry{Text: text, lower: lowerRunes(text), At: message.At}
-		if message.Role == "user" {
-			e.Label = "you: "
-		}
-		entries = append(entries, e)
-	}
-	return entries
-}
-
 // screenEntries splits a screen's text, the newest line first.
 func screenEntries(text string) []entry {
 	lines := strings.Split(text, "\n")
@@ -138,7 +116,7 @@ func search(panes []pane, query string) []result {
 		if !strong && len(found) > 0 && (found[0].Strong || !named) {
 			strong = found[0].Strong
 			r.Kind, r.rank = kindScreen, 2
-			if p.Conversation {
+			if p.Conversation != nil {
 				r.Kind, r.rank, r.at = kindSaid, 1, found[0].At
 			}
 		}
@@ -166,8 +144,8 @@ func listAll(panes []pane) []result {
 	results := make([]result, len(panes))
 	for i, p := range panes {
 		results[i] = result{Pane: p, Kind: kindPane, Named: true}
-		if !p.Active.IsZero() && !p.Here {
-			results[i].rank, results[i].at = -1, p.Active.UTC().Format(time.RFC3339Nano)
+		if !p.active().IsZero() && !p.Here {
+			results[i].rank, results[i].at = -1, p.active().UTC().Format(time.RFC3339Nano)
 		}
 	}
 	sort.SliceStable(results, func(i, j int) bool {

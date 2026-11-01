@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -179,5 +181,92 @@ func TestAKilledIndexWriteLeavesTheIndexUsable(t *testing.T) {
 		if strings.Count(line, "message number") != 1 {
 			t.Fatalf("a broken line: %q", line)
 		}
+	}
+}
+
+const stayAliveVariable = "REXLAUNCHER_TEST_STAY_ALIVE"
+
+// TestStayAlive is what liveSession runs as: a process with a pane in its environment.
+func TestStayAlive(t *testing.T) {
+	if os.Getenv(stayAliveVariable) != "" {
+		time.Sleep(time.Minute)
+	}
+}
+
+// liveSession makes what Claude Code leaves on disk for a session in a pane. It uses
+// this program, because macOS hides the environment of its own binaries from ps.
+func liveSession(t *testing.T, claude, block, id, kind, name string, messages ...string) {
+	t.Helper()
+	process := exec.Command(os.Args[0], "-test.run=^TestStayAlive$")
+	process.Env = append(os.Environ(), "REX_BLOCK="+block, stayAliveVariable+"=1")
+	if err := process.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { process.Process.Kill(); process.Wait() })
+	session, err := json.Marshal(map[string]any{"pid": process.Process.Pid, "sessionId": id, "name": name, "kind": kind})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for path, content := range map[string]string{
+		filepath.Join(claude, "sessions", strconv.Itoa(process.Process.Pid)+".json"): string(session),
+		filepath.Join(claude, "projects", "-some-folder", id+".jsonl"):               strings.Join(messages, ""),
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestFindConversationsMatchesSessionsToTheirPanes(t *testing.T) {
+	claude := t.TempDir()
+	const pane = "block:0000aaaa-0000-0000-0000-000000000001"
+	liveSession(t, claude, pane, "conv", "interactive", "Fix it", userLine("hello"))
+	found := findConversations(claude)
+	c, ok := found[pane]
+	if !ok || c.ID != "conv" || c.Name != "Fix it" || c.Active.IsZero() {
+		t.Fatalf("got %+v", found)
+	}
+}
+
+func TestFindConversationsLeavesOutAProcessThatIsGone(t *testing.T) {
+	claude := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(claude, "sessions"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gone, err := json.Marshal(map[string]any{"pid": 999999, "sessionId": "x", "kind": "interactive"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(claude, "sessions", "999999.json"), gone, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if found := findConversations(claude); len(found) != 0 {
+		t.Fatalf("got %+v", found)
+	}
+}
+
+func TestLoadTextReadsAConversationFromItsPane(t *testing.T) {
+	claude, cache := t.TempDir(), t.TempDir()
+	const block = "block:0000aaaa-0000-0000-0000-000000000003"
+	fakeRex(t, map[string]any{
+		"session.list": map[string]any{"sessions": []map[string]any{{"session_id": "s"}}},
+		"session.view.s": map[string]any{"label": "work", "windows": []map[string]any{{"window_id": "w", "layers": []map[string]any{
+			{"blocks": []map[string]any{{"block_id": block, "label": "shell", "creator_name": "com.superlogical.terminal"}}},
+		}}}},
+	})
+	liveSession(t, claude, block, "conv", "interactive", "Fix it", userLine("zebrafish"))
+	panes, err := loadPanes("", claude)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if panes[0].Name != "Fix it" || panes[0].Conversation == nil {
+		t.Fatalf("got %+v", panes[0])
+	}
+	panes = loadText(panes, cache)
+	if got := search(panes, "zebrafish"); len(got) != 1 || got[0].Kind != kindSaid {
+		t.Fatalf("got %+v", got)
 	}
 }

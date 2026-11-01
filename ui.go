@@ -275,9 +275,9 @@ func (m *model) visible() []result {
 		case "Panes":
 			keep = r.Named
 		case "Conversations":
-			keep = r.Pane.Conversation && (empty || r.Matches() > 0)
+			keep = r.Pane.Conversation != nil && (empty || r.Matches() > 0)
 		case "Screens":
-			keep = !r.Pane.Conversation && (empty || r.Matches() > 0)
+			keep = r.Pane.Conversation == nil && (empty || r.Matches() > 0)
 		}
 		if keep {
 			rows = append(rows, r)
@@ -542,8 +542,8 @@ func (m *model) rowLine(r result, width int, selected bool) string {
 	accessory := ""
 	if r.Matches() > 1 {
 		accessory = fmt.Sprint(r.Matches())
-	} else if len(words) == 0 && !r.Pane.Active.IsZero() {
-		accessory = age(r.Pane.Active, time.Now())
+	} else if len(words) == 0 && !r.Pane.active().IsZero() {
+		accessory = age(r.Pane.active(), time.Now())
 	}
 	if accessory != "" {
 		room -= ansi.StringWidth(accessory) + 1
@@ -557,7 +557,7 @@ func (m *model) rowLine(r result, width int, selected bool) string {
 		case len(words) > 0 && r.Matches() > 0:
 			best = &r.Found[0].entry
 			text = around(best.Text, words[0], rowBefore, rowLength)
-		case len(words) == 0 && r.Pane.Conversation && len(r.Pane.Text) > 0:
+		case len(words) == 0 && r.Pane.Conversation != nil && len(r.Pane.Text) > 0:
 			best = &r.Pane.Text[0]
 			text = best.Text
 		}
@@ -607,8 +607,8 @@ func (m *model) previewLines(width, height int) []string {
 		}
 		if r.Matches() > 0 {
 			lines = append(lines, m.detail("Matches", fmt.Sprint(r.Matches()), width))
-		} else if !r.Pane.Active.IsZero() {
-			lines = append(lines, m.detail("Active", ago(r.Pane.Active), width))
+		} else if !r.Pane.active().IsZero() {
+			lines = append(lines, m.detail("Active", ago(r.Pane.active()), width))
 		}
 	}
 	for len(lines) < height {

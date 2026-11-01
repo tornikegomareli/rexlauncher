@@ -8,11 +8,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
 
+// This file is everything rexlauncher knows about Claude Code: which sessions are
+// live, where they run, and how to read what was said in them.
+//
 // A Claude Code transcript is mostly tool output and copies of API requests: of
 // 2.3 GB measured on a real machine, 6.7 MB was text that people read. So the
 // picker searches an index with only that text, and each open only reads what
@@ -206,4 +211,110 @@ func pruneIndex(dir string) {
 		os.Remove(path)
 		os.Remove(strings.TrimSuffix(path, ".txt") + ".offset")
 	}
+}
+
+// conversation is a live Claude Code session.
+type conversation struct {
+	ID         string
+	Name       string
+	Transcript string
+	Active     time.Time
+}
+
+var rexBlockVariable = regexp.MustCompile(`\bREX_BLOCK=(block:[0-9a-f-]+)`)
+
+// findConversations returns the live Claude Code sessions by the Rex block they
+// run in. Each one has a file named after its process, and the process's
+// environment names its block.
+func findConversations(claudeDir string) map[string]conversation {
+	files, _ := filepath.Glob(filepath.Join(claudeDir, "sessions", "*.json"))
+	blocks := make([]string, len(files))
+	found := make([]conversation, len(files))
+	forEach(len(files), func(i int) {
+		data, err := os.ReadFile(files[i])
+		if err != nil {
+			return
+		}
+		var session struct {
+			PID       int    `json:"pid"`
+			SessionID string `json:"sessionId"`
+			Name      string `json:"name"`
+		}
+		if json.Unmarshal(data, &session) != nil || session.PID == 0 || session.SessionID == "" {
+			return
+		}
+		env, err := exec.Command("ps", "eww", "-p", fmt.Sprint(session.PID)).Output()
+		if err != nil {
+			return // The process is gone, and Claude Code left its file behind.
+		}
+		match := rexBlockVariable.FindSubmatch(env)
+		if match == nil {
+			return
+		}
+		// A session's folder comes from where it started, so look in all of them.
+		transcripts, _ := filepath.Glob(filepath.Join(claudeDir, "projects", "*", session.SessionID+".jsonl"))
+		if len(transcripts) == 0 {
+			return
+		}
+		blocks[i] = string(match[1])
+		found[i] = conversation{ID: session.SessionID, Name: session.Name, Transcript: transcripts[0]}
+		if info, err := os.Stat(transcripts[0]); err == nil {
+			found[i].Active = info.ModTime()
+		}
+	})
+	conversations := map[string]conversation{}
+	for i, block := range blocks {
+		if block != "" {
+			conversations[block] = found[i]
+		}
+	}
+	return conversations
+}
+
+func claudeDir() string {
+	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		return dir
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".claude")
+}
+
+// entries is what was said in the conversation, the newest first.
+func (c conversation) entries(index string) ([]entry, error) {
+	path, err := updateIndex(index, c.ID, c.Transcript)
+	if err != nil {
+		return nil, err
+	}
+	return messageEntries(path), nil
+}
+
+func cacheDir() (string, error) {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(base, "rexlauncher")
+	return dir, os.MkdirAll(dir, 0o700)
+}
+
+// messageEntries reads an index, the newest message first. Identical messages
+// count once.
+func messageEntries(path string) []entry {
+	lines := readLines(path)
+	seen := map[string]bool{}
+	var entries []entry
+	for i := len(lines) - 1; i >= 0; i-- {
+		message := parseMessage(lines[i])
+		text := clean(plain(message.Text))
+		if text == "" || seen[text] {
+			continue
+		}
+		seen[text] = true
+		e := entry{Text: text, lower: lowerRunes(text), At: message.At}
+		if message.Role == "user" {
+			e.Label = "you: "
+		}
+		entries = append(entries, e)
+	}
+	return entries
 }

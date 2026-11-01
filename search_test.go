@@ -25,7 +25,7 @@ func said(role, text string) string {
 // talking is a pane with a conversation.
 func talking(t *testing.T, block, name string, lines ...string) pane {
 	t.Helper()
-	return pane{Block: block, Name: name, Conversation: true, Text: messageEntries(writeLines(t, lines...))}
+	return pane{Block: block, Name: name, Conversation: &conversation{}, Text: messageEntries(writeLines(t, lines...))}
 }
 
 // showing is a pane with text on its screen.
@@ -286,8 +286,8 @@ func TestWordsInThePaneBeatLettersOfItsName(t *testing.T) {
 
 func TestAnEmptyQueryShowsRecentConversationsFirst(t *testing.T) {
 	now := time.Now()
-	old, recent := pane{Block: "old", Name: "o", Conversation: true, Active: now.Add(-time.Hour)}, pane{Block: "new", Name: "n", Conversation: true, Active: now}
-	here := pane{Block: "here", Name: "h", Conversation: true, Active: now.Add(time.Minute), Here: true}
+	old, recent := pane{Block: "old", Name: "o", Conversation: &conversation{Active: now.Add(-time.Hour)}}, pane{Block: "new", Name: "n", Conversation: &conversation{Active: now}}
+	here := pane{Block: "here", Name: "h", Conversation: &conversation{Active: now.Add(time.Minute)}, Here: true}
 	shell := pane{Block: "shell", Name: "s"}
 	results := search([]pane{shell, old, here, recent}, "")
 	var got []string
@@ -303,7 +303,7 @@ func TestAnEmptyQueryShowsRecentConversationsFirst(t *testing.T) {
 func TestTheRecentSectionIsLimited(t *testing.T) {
 	var panes []pane
 	for i := range maxRecent + 3 {
-		panes = append(panes, pane{Block: fmt.Sprint(i), Name: "x", Conversation: true, Active: time.Now().Add(time.Duration(i) * time.Minute)})
+		panes = append(panes, pane{Block: fmt.Sprint(i), Name: "x", Conversation: &conversation{Active: time.Now().Add(time.Duration(i) * time.Minute)}})
 	}
 	results := search(panes, "")
 	if results[0].Pane.Block != fmt.Sprint(maxRecent+2) || results[maxRecent-1].Heading() != "Recent conversations" || results[maxRecent].Heading() != "Panes" {
