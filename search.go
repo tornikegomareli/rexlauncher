@@ -60,13 +60,15 @@ type reason int
 const (
 	reasonRecent reason = iota // An empty query: its conversation changed last.
 	reasonName                 // Its name holds the words, or an empty query.
+	reasonAction               // An action, and not a pane.
 	reasonSaid                 // Its conversation holds the words.
 	reasonScreen               // Its screen holds the words.
 )
 
-// result is one row of the picker. There is one for each pane, because Enter
-// goes to a pane, and cannot go to a message in it.
+// result is one row of the picker: an action, or a pane. There is one for each pane,
+// because Enter goes to a pane, and cannot go to a message in it.
 type result struct {
+	Action *action
 	Pane   pane
 	Reason reason
 	// Partial says the words only occur inside other words.
@@ -77,6 +79,14 @@ type result struct {
 	Letters []int
 	Found   []match // The best first.
 	at      string
+}
+
+// key tells this row from the others, across searches.
+func (r result) key() string {
+	if r.Action != nil {
+		return r.Action.Name
+	}
+	return r.Pane.Block
 }
 
 // Matches is the number of messages or lines that hold the words.
@@ -94,6 +104,8 @@ func (r result) Heading() string {
 		return "Recent conversations"
 	case reasonName:
 		return "Panes"
+	case reasonAction:
+		return "Actions"
 	case reasonSaid:
 		return "Conversations"
 	}
@@ -131,7 +143,13 @@ var filters = []filter{
 	{"Screens", func(r result, empty bool) bool {
 		return r.Pane.Conversation == nil && (empty || r.Matches() > 0)
 	}},
+	{"Actions", func(r result, _ bool) bool { return r.Action != nil }},
 }
+
+const (
+	allTab     = 0
+	actionsTab = 4
+)
 
 // search finds panes by name first, then by the words said in their
 // conversations, the newest first, then by the text of their screens. All the

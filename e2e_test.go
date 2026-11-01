@@ -259,6 +259,61 @@ func TestGoToFocusesThePane(t *testing.T) {
 	}
 }
 
+// An action in the config sees the pane it was run on, and the picker lists it.
+func TestRunActionRunsOnThePaneBehindThePicker(t *testing.T) {
+	server(t)
+	target := newSession(t, "target")
+	if _, err := runRex("split", "-s", "target"); err != nil {
+		t.Fatal(err)
+	}
+	var keymap struct {
+		Config struct {
+			Path string `json:"path"`
+		} `json:"config"`
+	}
+	out, err := runRex("keymap", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(out, &keymap); err != nil {
+		t.Fatal(err)
+	}
+	seen := filepath.Join(t.TempDir(), "seen")
+	config := fmt.Sprintf(`rex.action{ name = "note_block", title = "Note Block", run = function(ctx)
+  local file = io.open(%q, "w")
+  file:write(ctx.block_id)
+  file:close()
+end }`, seen)
+	if err := os.WriteFile(keymap.Config.Path, []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runRex("config", "reload"); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+
+	actions, err := loadActions("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := map[string]bool{}
+	for _, a := range actions {
+		listed[a.Name] = true
+	}
+	if !listed["note_block"] || !listed["com.superlogical.terminal.clear"] {
+		t.Fatalf("listed %v", listed)
+	}
+	if err := runAction("note_block", target.Session, target.Block, ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(seen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != target.Block {
+		t.Errorf("ran on %s, want %s", got, target.Block)
+	}
+}
+
 func TestRefusesAServerThatDoesNotHoldItsOwnSession(t *testing.T) {
 	server(t)
 	newSession(t, "only")

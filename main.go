@@ -35,15 +35,18 @@ func waitForEnter() {
 func run(args []string) error {
 	switch {
 	case len(args) == 1 && args[0] == "pick":
-		return pick("")
+		return pick("", "")
 	case len(args) == 2 && args[0] == "pick":
-		return pick(args[1])
+		return pick(args[1], "")
+	case len(args) == 3 && args[0] == "pick":
+		return pick(args[1], args[2])
 	}
-	return fmt.Errorf("usage: rexlauncher pick [CLIENT]")
+	return fmt.Errorf("usage: rexlauncher pick [CLIENT [BLOCK]]")
 }
 
-// pick shows the picker, and goes to the pane that the person chose.
-func pick(client string) error {
+// pick shows the picker, and then goes to the pane or runs the action that the person
+// chose. Block is the pane that was focused when the picker opened.
+func pick(client, block string) error {
 	if err := checkServer(os.Getenv("REX_SESSION")); err != nil {
 		return err
 	}
@@ -57,13 +60,17 @@ func pick(client string) error {
 			pruneIndex(index)
 			return loadText(panes, index)
 		},
-		capture: captureScreen,
+		capture:     captureScreen,
+		loadActions: func() ([]action, error) { return loadActions(client) },
 	}
 	if _, err := tea.NewProgram(picker, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run(); err != nil {
 		return err
 	}
 	if picker.err != nil {
 		return picker.err
+	}
+	if picker.chosenAction != nil {
+		return runAction(picker.chosenAction.Name, os.Getenv("REX_SESSION"), block, client)
 	}
 	if picker.chosen == nil {
 		return nil

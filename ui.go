@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -29,7 +30,11 @@ type model struct {
 	loadPanes func() ([]pane, error)
 	loadText  func([]pane) []pane
 	capture   func(pane) (string, error)
+	// loadActions lists what Rex can do.
+	loadActions func() ([]action, error)
 
+	actions    []action
+	actionsErr error
 	panes      []pane
 	textLoaded bool
 	query      []rune
@@ -46,14 +51,19 @@ type model struct {
 
 	width, height int
 
-	chosen *pane
-	err    error
+	chosen       *pane
+	chosenAction *action
+	err          error
 }
 
 type (
 	panesMsg struct {
 		panes []pane
 		err   error
+	}
+	actionsMsg struct {
+		actions []action
+		err     error
 	}
 	textMsg    struct{ panes []pane }
 	captureMsg struct {
@@ -68,10 +78,13 @@ func tick() tea.Cmd {
 }
 
 func (m *model) Init() tea.Cmd {
-	load := m.loadPanes
+	load, loadActions := m.loadPanes, m.loadActions
 	return tea.Batch(tick(), func() tea.Msg {
 		panes, err := load()
 		return panesMsg{panes, err}
+	}, func() tea.Msg {
+		actions, err := loadActions()
+		return actionsMsg{actions, err}
 	})
 }
 
@@ -94,6 +107,9 @@ func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refresh(true)
 		load, panes := m.loadText, m.panes
 		return m, tea.Batch(m.captureSelected(), func() tea.Msg { return textMsg{load(panes)} })
+	case actionsMsg:
+		m.actions, m.actionsErr = msg.actions, msg.err
+		m.refresh(true)
 	case textMsg:
 		m.panes, m.textLoaded = msg.panes, true
 		m.refresh(true)
@@ -166,7 +182,11 @@ func (m *model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "enter":
 		if r, ok := m.current(); ok {
-			m.chosen = &r.Pane
+			if r.Action != nil {
+				m.chosenAction = r.Action
+			} else {
+				m.chosen = &r.Pane
+			}
 			return m, tea.Quit
 		}
 		return m, nil
@@ -239,16 +259,17 @@ func (m *model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // refresh searches again. If the query is the same and only the text changed, the
-// selection stays on its pane.
+// selection stays on its row.
 func (m *model) refresh(keepSelection bool) {
-	block := ""
+	keep := ""
 	if r, ok := m.current(); ok && keepSelection {
-		block = r.Pane.Block
+		keep = r.key()
 	}
-	m.rows = search(m.panes, string(m.query))
+	m.rows = append(search(m.panes, string(m.query)), searchActions(m.actions, string(m.query))...)
+	sort.SliceStable(m.rows, func(i, j int) bool { return m.rows[i].before(m.rows[j]) })
 	m.selected, m.offset, m.previewTop = 0, 0, 0
 	for i, r := range m.visible() {
-		if r.Pane.Block == block {
+		if r.key() == keep {
 			m.selected = i
 		}
 	}
@@ -258,7 +279,15 @@ func (m *model) refresh(keepSelection bool) {
 func (m *model) visible() []result {
 	empty := len(m.words()) == 0
 	var rows []result
+	actions := 0
 	for _, r := range m.rows {
+		if r.Action != nil && m.filter != actionsTab {
+			// The All tab shows a few, once there is a query. The others show none.
+			if m.filter != allTab || empty || actions == maxActionsInAll {
+				continue
+			}
+			actions++
+		}
 		if filters[m.filter].keep(r, empty) {
 			rows = append(rows, r)
 		}
@@ -291,7 +320,7 @@ func (m *model) words() []string {
 
 // showsScreen says if the preview of a row is the pane's screen.
 func (m *model) showsScreen(r result) bool {
-	return len(m.words()) == 0 || r.Matches() == 0
+	return r.Action == nil && (len(m.words()) == 0 || r.Matches() == 0)
 }
 
 // captureSelected reads the screen of the selected pane, if the preview shows it.
@@ -385,10 +414,7 @@ func (m *model) ruleLine(width int) string {
 
 // headerLine is the query with its cursor, and the state of the picker on the right.
 func (m *model) headerLine(width int) string {
-	state := fmt.Sprintf("%d panes", len(m.visible()))
-	if len(m.visible()) == 1 {
-		state = "1 pane"
-	}
+	state := m.count()
 	if !m.textLoaded {
 		state = "Reading conversations…"
 	}
@@ -401,7 +427,7 @@ func (m *model) headerLine(width int) string {
 		first := []rune(after)
 		spans = append(spans, span{string(first[:1]), "7"}, span{cut(string(first[1:]), room-ansi.StringWidth(before)-1), ""})
 	case len(m.query) == 0:
-		spans = append(spans, span{" ", "7"}, span{cut("Search panes and conversations", room-1), styleDim})
+		spans = append(spans, span{" ", "7"}, span{cut("Search panes, conversations and actions", room-1), styleDim})
 	default:
 		spans = append(spans, span{" ", "7"})
 	}
@@ -411,6 +437,23 @@ func (m *model) headerLine(width int) string {
 	}
 	spans = append(spans, span{strings.Repeat(" ", max(width-used-ansi.StringWidth(state)-1, 0)), ""}, span{state, styleDim})
 	return paint(spans, "49", width)
+}
+
+// count says how many rows there are, in the word for what they are.
+func (m *model) count() string {
+	rows, noun := m.visible(), "pane"
+	for _, r := range rows {
+		if r.Action != nil {
+			noun = "result"
+		}
+	}
+	if m.filter == actionsTab {
+		noun = "action"
+	}
+	if len(rows) == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", len(rows), noun)
 }
 
 func (m *model) tabsLine(width int) string {
@@ -433,6 +476,10 @@ func (m *model) listLines(width, height int) []string {
 	if len(rows) == 0 {
 		text := "No pane has these words in one message or line"
 		switch {
+		case m.filter == actionsTab && m.actionsErr != nil:
+			text = clean(m.actionsErr.Error())
+		case m.filter == actionsTab:
+			text = "No action has these words"
 		case len(m.panes) == 0 && !m.textLoaded:
 			text = ""
 		case len(m.query) == 0:
@@ -467,6 +514,11 @@ func (m *model) rowLine(r result, width int, selected bool) string {
 		dim, background, bar = "", styleSelected, "▌"
 	}
 	room := width - 2
+	if r.Action != nil {
+		title := cut(clean(r.Action.Title), room)
+		spans := append([]span{{bar, styleAccent}, {" ", ""}}, marked(title, words, styleBold)...)
+		return paint(append(spans, span{"  " + clean(r.Action.Category), dim}), background, width)
+	}
 	title := cut(clean(r.Pane.title()), room*6/10)
 	spans := []span{{bar, styleAccent}, {" ", ""}}
 	if r.Letters != nil {
@@ -529,7 +581,14 @@ func (m *model) rowLine(r result, width int, selected bool) string {
 func (m *model) previewLines(width, height int) []string {
 	r, ok := m.current()
 	lines := make([]string, 0, height)
-	if ok {
+	if ok && r.Action != nil {
+		lines = append(lines,
+			paint([]span{{cut(clean(r.Action.Title), width), styleBold}}, "49", width),
+			strings.Repeat(" ", width),
+			m.detail("Action", clean(r.Action.Name), width),
+			m.detail("Category", clean(r.Action.Category), width),
+		)
+	} else if ok {
 		room := max(height-metadataRows-1, 0)
 		var content []string
 		if m.showsScreen(r) {
@@ -598,7 +657,11 @@ func (m *model) matchLines(r result, width int) []string {
 }
 
 func (m *model) footerLine(width int) string {
-	spans := []span{{" ↵", styleBold}, {" Go to pane   ", styleDim}, {"tab", styleBold}, {" Filter   ", styleDim}, {"esc", styleBold}, {" Close", styleDim}}
+	enter := " Go to pane   "
+	if r, ok := m.current(); ok && r.Action != nil {
+		enter = " Run action   "
+	}
+	spans := []span{{" ↵", styleBold}, {enter, styleDim}, {"tab", styleBold}, {" Filter   ", styleDim}, {"esc", styleBold}, {" Close", styleDim}}
 	used := 0
 	for _, s := range spans {
 		used += ansi.StringWidth(s.text)

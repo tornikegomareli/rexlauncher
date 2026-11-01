@@ -35,7 +35,7 @@ rex.action{
       focus = true,
       layout = rex.layout.block{
         flavor = "com.superlogical.terminal.shell",
-        options = { command = { plugin.dir .. "/bin/rexlauncher", "pick", ctx.client_id or "" } },
+        options = { command = { plugin.dir .. "/bin/rexlauncher", "pick", ctx.client_id or "", ctx.block_id or "" } },
       },
     }
     open_layers[session] = created.layer_id

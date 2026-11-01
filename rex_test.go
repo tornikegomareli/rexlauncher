@@ -60,6 +60,26 @@ exit 0
 	}
 }
 
+// fakeActions puts a rex on PATH that lists actions: the server's, and with -C a client's.
+func fakeActions(t *testing.T, server, client string) {
+	t.Helper()
+	dir := t.TempDir()
+	script := `#!/bin/sh
+shift # --autostart=false
+if [ "$1" = -C ]; then cat <<'END'
+` + client + `
+END
+else cat <<'END'
+` + server + `
+END
+fi
+`
+	if err := os.WriteFile(filepath.Join(dir, "rex"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 type block = map[string]any
 
 func twoSessions() map[string]any {

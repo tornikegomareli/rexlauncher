@@ -201,7 +201,7 @@ func TestTabChangesTheFilter(t *testing.T) {
 		t.Fatalf("filter %d after a full turn", m.filter)
 	}
 	press(m, tea.KeyShiftTab)
-	if filters[m.filter].name != "Screens" {
+	if filters[m.filter].name != "Actions" {
 		t.Fatalf("filter %s", filters[m.filter].name)
 	}
 }
