@@ -36,7 +36,7 @@ if [ "$1" = api ]; then
   [ -n "$block" ] && key="$3.$block.$method"
   for file in "` + dir + `/$key.json" "` + dir + `/$3.json"; do
     if [ -f "$file" ]; then
-      if grep -q '^"FAIL"$' "$file"; then echo "no such session" >&2; exit 1; fi
+      if grep -q '^"FAIL"$' "$file"; then echo "failed (status=404 code=session_not_found)" >&2; exit 1; fi
       cat "$file"; exit 0
     fi
   done
@@ -222,5 +222,13 @@ func TestAPaneWhoseShellReportsNoFolderStillHasOne(t *testing.T) {
 	}
 	if got := panes[0].Cwd; got != "/code/my app" {
 		t.Fatalf("the reported folder comes first: %q", got)
+	}
+}
+
+func TestGoingToAClosedPaneSaysSoPlainly(t *testing.T) {
+	fakeRex(t, map[string]any{"session.focus_block": "FAIL"})
+	err := goTo("s1", "w1", "b1", "")
+	if err == nil || err.Error() != "that pane has closed" {
+		t.Fatalf("got %v", err)
 	}
 }

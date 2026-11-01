@@ -4,8 +4,10 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -75,6 +77,9 @@ func goTo(session, window, block, client string) error {
 	var ignored map[string]any
 	err := callRex("session.focus_block", map[string]string{"session_id": session, "block_id": block}, &ignored)
 	if err != nil {
+		if strings.Contains(err.Error(), "not_found") {
+			return errors.New("that pane has closed")
+		}
 		return err
 	}
 	selectArgs := []string{"do", "session.select", "session_id=" + session, "window_id=" + window}
