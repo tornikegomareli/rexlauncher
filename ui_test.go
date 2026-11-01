@@ -672,3 +672,19 @@ func TestAGrownWindowShowsTheWholeList(t *testing.T) {
 		t.Fatalf("got\n%s", out)
 	}
 }
+
+func TestARowOfAShellNamesItsSession(t *testing.T) {
+	m := open(t, 120, 30, pane{Block: "a", Name: "shell", SessionLabel: "infra"}, pane{Block: "b", Name: "shell", SessionLabel: "logs"})
+	out := view(m)
+	if !strings.Contains(out, "infra · shell") || !strings.Contains(out, "logs · shell") {
+		t.Fatalf("got\n%s", out)
+	}
+}
+
+func TestAConversationKeepsItsOwnName(t *testing.T) {
+	p := talking(t, "a", "Fix the lock", said("user", "hello"))
+	p.SessionLabel = "checkout"
+	if got := p.title(); got != "Fix the lock" {
+		t.Fatalf("got %q", got)
+	}
+}

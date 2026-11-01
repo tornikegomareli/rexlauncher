@@ -254,12 +254,19 @@ func lettersOf(name string, words []string) []int {
 
 // title is the name of the pane. Rex can have none for it.
 func (p pane) title() string {
-	for _, name := range []string{p.Name, p.WindowLabel, p.SessionLabel} {
-		if name != "" {
-			return name
+	name := "pane"
+	for _, candidate := range []string{p.Name, p.WindowLabel, p.SessionLabel} {
+		if candidate != "" {
+			name = candidate
+			break
 		}
 	}
-	return "pane"
+	// A conversation has a name of its own. A shell is often just "shell", so the
+	// session is what tells it from the others.
+	if p.Conversation == nil && p.SessionLabel != "" && p.SessionLabel != name {
+		return p.SessionLabel + " · " + name
+	}
+	return name
 }
 
 var (
