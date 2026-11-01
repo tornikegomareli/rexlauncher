@@ -1,7 +1,7 @@
 id = "tornikegomareli.rexlauncher"
 name = "Rex Launcher"
 version = "0.1.0"
-description = "Search every Rex pane, and the words said in its Claude Code conversation, then go there."
+description = "Search every Rex pane, and the words said in its Claude Code conversation, and run Rex's actions."
 homepage = "https://github.com/tornikegomareli/rexlauncher"
 license = "MIT"
 rex_api = 7

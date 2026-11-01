@@ -1,14 +1,21 @@
 <h1 align="center">Rex Launcher</h1>
 
-<h3 align="center">Find any Rex pane by what was said in it.</h3>
+<h3 align="center">Find any Rex pane by what was said in it, and run any Rex action.</h3>
 
 <p align="center">
-  <img src=".github/assets/hero.png" width="100%" alt="A Rex window with Rex Launcher open over it. The search for migration finds two Claude Code conversations, and the preview on the right shows the messages that hold the word" />
+  <img src=".github/assets/hero.png" width="100%" alt="Rex Launcher open over a dark Rex window. It lists recent conversations with their last message, then the other panes, and the preview on the right shows the live screen of the selected pane" />
 </p>
 
-Rex Launcher is a [rexd](https://github.com/tornikegomareli/rexd) plugin for [Rex](https://www.superlogical.com/rex). It searches every pane on your server, and the words said in the Claude Code conversations inside them, then goes to the pane you choose.
+Rex Launcher is one search box for everything in [Rex](https://www.superlogical.com/rex). Press a key, type a few letters, and press Enter.
 
-Type part of a name, or a word you remember from a conversation. It also runs Rex's actions, so `split d` and Enter splits the pane you were on.
+| Type | Enter does this |
+| --- | --- |
+| The name of a session, window, pane or folder | Goes to that pane |
+| A word you remember from a Claude Code conversation | Goes to the pane with that conversation, and the preview shows the message |
+| A word on any pane's screen, such as an error | Goes to that pane |
+| An action, such as `split d`, `theme` or `sidebar` | Runs it on the pane you were on |
+
+It is a [rexd](https://github.com/tornikegomareli/rexd) plugin.
 
 ## Install
 
@@ -59,7 +66,19 @@ Press the key again to close the picker.
 
 ## Actions
 
-The picker lists the actions Rex's palette has, and those of your `init.lua`, such as Split Pane Down, Change Theme… and Toggle Sidebar. An action runs on the pane you were on when you opened the picker.
+<p align="center">
+  <img src=".github/assets/actions.png" width="100%" alt="Rex Launcher with the search split d. It lists Split Pane Down, Left, Right and Up as actions" />
+</p>
+
+You can run Rex's actions without leaving the search box. It has the actions in Rex's palette and those of your `init.lua`:
+
+- Split a pane down, right, left or up.
+- Zoom, float or move a pane, and balance the splits.
+- Open the theme picker, and toggle the sidebar.
+- Start a new tab, window or session.
+- Run your own actions, such as a `lazygit` one.
+
+An action runs on the pane you were on when you opened the picker.
 
 With a query, the All tab shows up to 4 actions, below the panes with that name and above the conversations. The Actions tab lists all of them.
 
@@ -98,6 +117,16 @@ rexd install ./rexlauncher --link
 make test    # unit tests
 make e2e     # against a Rex server of its own
 ```
+
+| Folder | What it holds |
+| --- | --- |
+| `cmd/rexlauncher` | The program |
+| `internal/picker` | The screen: the query, the rows and the preview |
+| `internal/search` | What finds panes and actions, and their order |
+| `internal/rex` | Everything it asks the `rex` command |
+| `internal/conversations` | Everything it knows about Claude Code's files |
+| `rex/config.lua` | The action and the key, loaded into Rex's config |
+| `e2e` | Tests against a real Rex |
 
 ## License
 
