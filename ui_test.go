@@ -459,20 +459,88 @@ func TestClickingAFilterChoosesIt(t *testing.T) {
 	}
 }
 
-func TestTheWheelMovesTheListOrThePreview(t *testing.T) {
+// Each character of a tab's label, as drawn, must choose that tab.
+func TestEveryLetterOfATabChoosesIt(t *testing.T) {
+	m := open(t, 120, 30, demoPanes(t)...)
+	line := strings.Split(view(m), "\n")[tabsRow]
+	for i, f := range filters {
+		at := strings.Index(line, f.name)
+		for x := at; x < at+len(f.name); x++ {
+			click(m, x, tabsRow)
+			if m.filter != i {
+				t.Fatalf("%s at %d chose %s", f.name, x, filters[m.filter].name)
+			}
+		}
+	}
+}
+
+func TestDrawingChangesNothing(t *testing.T) {
+	m := open(t, 120, 12, demoPanes(t)...)
+	typeText(m, "panes")
+	press(m, tea.KeyDown)
+	before := fmt.Sprint(m.selected, m.offset, m.previewTop, m.lines)
+	first := m.View()
+	if second := m.View(); first != second || fmt.Sprint(m.selected, m.offset, m.previewTop, m.lines) != before {
+		t.Fatal("View changed the picker")
+	}
+}
+
+func TestTheWheelMovesTheList(t *testing.T) {
 	m := open(t, 120, 30, demoPanes(t)...)
 	wheel(m, 5, 10, tea.MouseButtonWheelDown)
 	if m.selected != 1 {
 		t.Fatalf("selected %d", m.selected)
 	}
+	wheel(m, 5, 10, tea.MouseButtonWheelUp)
+	if m.selected != 0 {
+		t.Fatalf("selected %d", m.selected)
+	}
+}
+
+// previewText is what the right side of the picker shows.
+func previewText(m *model) string {
+	var out []string
+	for _, line := range strings.Split(view(m), "\n") {
+		if _, right, ok := strings.Cut(line, "│"); ok {
+			out = append(out, right)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+func TestTheWheelScrollsTheMatchesInThePreview(t *testing.T) {
+	var lines []string
+	for i := range 12 {
+		lines = append(lines, said("user", fmt.Sprintf("word number %d", i)))
+	}
+	m := open(t, 120, 30, talking(t, "a", "x", lines...))
+	typeText(m, "word")
+	if !strings.Contains(previewText(m), "word number 11") {
+		t.Fatalf("got\n%s", view(m))
+	}
 	wheel(m, 100, 10, tea.MouseButtonWheelDown)
-	if m.selected != 1 || m.previewTop != 1 {
-		t.Fatalf("selected %d, preview at %d", m.selected, m.previewTop)
+	if m.selected != 0 || strings.Contains(previewText(m), "word number 11") {
+		t.Fatalf("selected %d:\n%s", m.selected, view(m))
 	}
 	wheel(m, 100, 10, tea.MouseButtonWheelUp)
-	wheel(m, 5, 10, tea.MouseButtonWheelUp)
-	if m.selected != 0 || m.previewTop != 0 {
-		t.Fatalf("selected %d, preview at %d", m.selected, m.previewTop)
+	if !strings.Contains(previewText(m), "word number 11") {
+		t.Fatalf("got\n%s", view(m))
+	}
+	for range 100 {
+		wheel(m, 100, 10, tea.MouseButtonWheelDown)
+	}
+	if !strings.Contains(previewText(m), "word number 0") {
+		t.Fatalf("scrolled past the end:\n%s", view(m))
+	}
+}
+
+func TestALiveScreenDoesNotScroll(t *testing.T) {
+	m := open(t, 120, 30, demoPanes(t)...)
+	before := view(m)
+	wheel(m, 100, 10, tea.MouseButtonWheelDown)
+	press(m, tea.KeyShiftDown)
+	if m.previewTop != 0 || view(m) != before {
+		t.Fatalf("preview at %d:\n%s", m.previewTop, view(m))
 	}
 }
 

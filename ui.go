@@ -14,7 +14,6 @@ const (
 	previewMinimumWidth = 72
 	refreshInterval     = 600 * time.Millisecond
 	metadataRows        = 3
-	tabsLineRow         = 2
 
 	// SGR parameters. They come from the terminal's palette, so the picker follows
 	// a light or a dark theme.
@@ -43,8 +42,7 @@ type model struct {
 	screens    map[string]string
 	capturing  bool
 	previewTop int
-	// lineRows has the row at each line of the list, or -1, for the mouse.
-	lineRows []int
+	lines      []listLine
 
 	width, height int
 
@@ -78,6 +76,12 @@ func (m *model) Init() tea.Cmd {
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.update(msg)
+	m.arrange()
+	return next, cmd
+}
+
+func (m *model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -118,48 +122,36 @@ func (m *model) mouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if msg.Action != tea.MouseActionPress {
 		return m, nil
 	}
-	inPreview := m.width >= previewMinimumWidth && msg.X >= m.listWidth()
 	switch msg.Button {
 	case tea.MouseButtonWheelUp:
-		if inPreview {
+		if m.inPreview(msg.X) {
 			m.previewTop = max(m.previewTop-1, 0)
 			return m, nil
 		}
 		return m, m.move(m.selected - 1)
 	case tea.MouseButtonWheelDown:
-		if inPreview {
+		if m.inPreview(msg.X) {
 			m.previewTop++
 			return m, nil
 		}
 		return m, m.move(m.selected + 1)
 	case tea.MouseButtonLeft:
-		if msg.Y == tabsLineRow {
-			x := 1
-			for i, filter := range filters {
-				if msg.X >= x && msg.X < x+len(filter.name)+2 {
-					return m, m.setFilter(i)
-				}
-				x += len(filter.name) + 3
+		if msg.Y == tabsRow {
+			if tab, ok := tabAt(msg.X); ok {
+				return m, m.setFilter(tab)
 			}
 			return m, nil
 		}
-		row := msg.Y - tabsLineRow - 2
-		if inPreview || row < 0 || row >= len(m.lineRows) || m.lineRows[row] < 0 {
+		row, ok := m.rowAt(msg.Y)
+		if m.inPreview(msg.X) || !ok {
 			return m, nil
 		}
-		if m.lineRows[row] == m.selected {
+		if row == m.selected {
 			return m.key(tea.KeyMsg{Type: tea.KeyEnter})
 		}
-		return m, m.move(m.lineRows[row])
+		return m, m.move(row)
 	}
 	return m, nil
-}
-
-func (m *model) listWidth() int {
-	if m.width < previewMinimumWidth {
-		return m.width
-	}
-	return m.width * 58 / 100
 }
 
 func (m *model) key(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -317,10 +309,6 @@ func (m *model) captureSelected() tea.Cmd {
 	}
 }
 
-func (m *model) bodyHeight() int {
-	return max(m.height-6, 1)
-}
-
 // span is text in one style.
 type span struct{ text, style string }
 
@@ -435,11 +423,10 @@ func (m *model) tabsLine(width int) string {
 	return paint(spans, "49", width)
 }
 
-// listLines draws the rows with their headings, and keeps the selected row in view.
+// listLines draws what arrange chose.
 func (m *model) listLines(width, height int) []string {
 	rows := m.visible()
 	lines := make([]string, 0, height)
-	m.lineRows = nil
 	if len(rows) == 0 {
 		text := "No pane has these words"
 		switch {
@@ -451,47 +438,15 @@ func (m *model) listLines(width, height int) []string {
 			text = "Reading conversations…"
 		}
 		lines = append(lines, paint([]span{{"  " + cut(text, width-2), styleDim}}, "49", width))
-	} else {
-		// What each line of the list holds: a row, or the heading of a row, or a gap.
-		type item struct {
-			row     int
-			heading bool
-			gap     bool
-		}
-		var layout []item
-		line := map[int]int{}
-		heading := ""
-		for i, r := range rows {
-			if m.filter == 0 && r.Heading() != heading {
-				if heading != "" {
-					layout = append(layout, item{gap: true})
-				}
-				heading = r.Heading()
-				layout = append(layout, item{row: i, heading: true})
-			}
-			line[i] = len(layout)
-			layout = append(layout, item{row: i})
-		}
-		at := line[m.selected]
-		if at > 0 && layout[at-1].heading {
-			at-- // Keep the heading of a section with its first row.
-		}
-		m.offset = min(m.offset, at)
-		if line[m.selected] >= m.offset+height {
-			m.offset = line[m.selected] - height + 1
-		}
-		for _, it := range layout[min(m.offset, len(layout)):min(m.offset+height, len(layout))] {
-			switch {
-			case it.gap:
-				lines = append(lines, strings.Repeat(" ", width))
-				m.lineRows = append(m.lineRows, -1)
-			case it.heading:
-				lines = append(lines, paint([]span{{" " + cut(rows[it.row].Heading(), width-1), styleDim}}, "49", width))
-				m.lineRows = append(m.lineRows, -1)
-			default:
-				lines = append(lines, m.rowLine(rows[it.row], width, it.row == m.selected))
-				m.lineRows = append(m.lineRows, it.row)
-			}
+	}
+	for _, line := range m.shown() {
+		switch {
+		case line.gap:
+			lines = append(lines, strings.Repeat(" ", width))
+		case line.heading:
+			lines = append(lines, paint([]span{{" " + cut(rows[line.row].Heading(), width-1), styleDim}}, "49", width))
+		default:
+			lines = append(lines, m.rowLine(rows[line.row], width, line.row == m.selected))
 		}
 	}
 	for len(lines) < height {
@@ -577,9 +532,7 @@ func (m *model) previewLines(width, height int) []string {
 		if m.showsScreen(r) {
 			content = m.screenLines(r, width, room)
 		} else {
-			content = m.matchLines(r, width)
-			m.previewTop = min(m.previewTop, max(len(content)-1, 0))
-			content = content[m.previewTop:]
+			content = m.matchLines(r, width)[m.previewTop:]
 		}
 		lines = append(lines, content[:min(room, len(content))]...)
 		for len(lines) < room {
