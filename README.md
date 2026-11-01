@@ -1,6 +1,6 @@
 <h1 align="center">Rex Launcher</h1>
 
-<h3 align="center">Find any Rex pane by what was said in it, run any Rex action, and put any skill in your agent's prompt.</h3>
+<h3 align="center">See which agents need you, answer them, find any pane by what was said in it, and run any Rex action or skill.</h3>
 
 <p align="center">
   <img src=".github/assets/hero.gif" width="100%" alt="Rex Launcher open over a dark Rex window. Over a Claude Code session, it finds another session by a word from its conversation, splits the pane with split r, then finds a skill and puts /code-review in the prompt" />
@@ -10,11 +10,13 @@ Rex Launcher is one search box for everything in [Rex](https://www.superlogical.
 
 | Type | Enter does this |
 | --- | --- |
+| Nothing | Lists the agents that need you first. Press `ctrl+r` to answer one without leaving your pane |
 | The name of a session, window, pane or folder | Goes to that pane |
 | A word you remember from a Claude Code conversation | Goes to the pane with that conversation, and the preview shows the message |
 | A word on any pane's screen, such as an error | Goes to that pane |
 | An action, such as `split d`, `theme` or `sidebar` | Runs it on the pane you were on |
 | A skill of the agent you were in, such as `review` | Puts `/code-review` in that agent's prompt |
+| The name of a saved layout | Builds that session again |
 
 It is a [rexd](https://github.com/tornikegomareli/rexd) plugin.
 
@@ -54,16 +56,63 @@ rex.bind("cmd+shift+k", has_launcher and "rexlauncher" or "session.switch")
 | Move in the list | Up, Down, Ctrl+P, Ctrl+N |
 | Move by a page, or to the first or last row | PageUp, PageDown, Home, End |
 | Go to the selected pane, run the selected action, or put the selected skill in the prompt | Enter, or click the selected row |
-| Filter: All, Panes, Conversations, Screens, Skills, Actions | Tab, Shift+Tab |
+| Answer the selected agent | Ctrl+R |
+| Delete the selected layout | Ctrl+X twice |
+| Filter: All, Needs you, Panes, Conversations, Screens, Skills, Layouts, Actions | Tab, Shift+Tab |
 | Scroll the preview | Shift+Up, Shift+Down, or the wheel |
 | Delete a word, or the whole query | Ctrl+W, Ctrl+U |
 | Close | Esc |
 
 The picker has one row for each pane: its name, and the best match in it. With a window of 72 columns or more, the right side has a preview: all the matches of the selected pane, or its live screen with colors if it has no match. The details of the pane are below the preview.
 
-With no query, the picker lists the conversations that changed last, and then the other panes. A pane in the window of the picker stays under Panes and out of the recent ones, because it is behind the picker.
+With no query, the picker lists what needs you, what finished, what is at work, the conversations that changed last, and then the other panes. A pane in the window of the picker stays out of the recent conversations, because it is behind the picker.
 
 Press the key again to close the picker.
+
+## Needs you
+
+Rex knows what each program says it is doing, through the [Program Status Protocol](https://www.superlogical.com/rex/docs/build/program-status). Claude Code reports it, so a blocked agent no longer looks like an idle one.
+
+| Section | What is in it |
+| --- | --- |
+| Needs you | Agents that wait for you, with `permission`, `question` or `auth`, and those that failed |
+| Finished | Agents that finished and that nobody has looked at yet, up to 6 |
+| Working | Agents at work, with their progress if they report it |
+
+Each row has the agent's own message, such as `approve Bash: make deploy`. The list refreshes while the picker is open. The pane you opened the picker from stays out of these sections. The Needs you tab keeps only what needs you and what finished.
+
+### Answer an agent
+
+Select an agent and press `ctrl+r`. The preview shows its live screen, so you see what it asks. The picker stays open afterwards, for the next agent.
+
+| The agent | `ctrl+r` lets you |
+| --- | --- |
+| Waits on a menu, such as a permission prompt | Press a number to choose. Enter goes to its pane instead |
+| Is at rest, or at work | Type text. Enter sends it |
+| Wants a password | Nothing. Go to its pane to type it |
+
+An answer is only sent if the agent still shows what you saw. If it moved on, nothing is sent, and the picker says so. A menu takes no text, because Enter after the text would pick its default option.
+
+A menu's numbers are the agent's own, so one of them can do more than the others, such as allowing a command for good. Read them in the preview first.
+
+You can answer a pane that reports `blocked`, or one that holds a Claude Code conversation.
+
+## Layouts
+
+Open the Layouts tab, choose **Save this layout** and name it. Enter on a saved layout builds a new session with its name. Search finds a layout by its name, its panes and its folders.
+
+A layout keeps:
+
+- The windows and their names.
+- The splits and their sizes.
+- The folder of each pane.
+- The conversation of each Claude Code pane, which resumes with `claude --resume`, through your own shell.
+
+It runs nothing else again, because repeating a command could repeat what it did, so every other pane comes back as a shell in its folder. That includes Codex and pi. Floating panes and zoom are not kept.
+
+If a session already has the layout's name, Enter goes to that session instead of starting everything twice. A conversation that is still open in another pane is not resumed, because two copies of Claude Code on one conversation would write over each other.
+
+Saving a name again replaces that layout.
 
 ## Actions
 
@@ -130,7 +179,7 @@ Limits:
 
 ## Your data
 
-Nothing leaves your machine. A transcript is mostly tool output, so the plugin keeps an index with only the text above, in your cache folder (`~/Library/Caches/rexlauncher` on macOS). Only you can read these files. Each one is deleted 30 days after its conversation was last searched, when the picker opens. `rexd remove` does not delete them, so to remove the plugin and its index, also delete that folder. The text of your other panes stays in memory while the picker is open.
+Nothing leaves your machine. Layouts are in your config folder (`~/Library/Application Support/rexlauncher/layouts` on macOS), and only you can read them. They hold folders, pane titles and conversation IDs. A transcript is mostly tool output, so the plugin keeps an index with only the text above, in your cache folder (`~/Library/Caches/rexlauncher` on macOS). Only you can read these files. Each one is deleted 30 days after its conversation was last searched, when the picker opens. `rexd remove` does not delete them, so to remove the plugin and its index, also delete that folder. The text of your other panes stays in memory while the picker is open.
 
 ## Develop
 
@@ -149,6 +198,7 @@ make e2e     # against a Rex server of its own
 | `internal/rex` | Everything it asks the `rex` command |
 | `internal/conversations` | Everything it knows about Claude Code's conversations |
 | `internal/skills` | What finds the skills of Claude Code, Codex and pi |
+| `internal/layouts` | What saves a session's layout and builds it again |
 | `rex/config.lua` | The action and the key, loaded into Rex's config |
 | `e2e` | Tests against a real Rex |
 

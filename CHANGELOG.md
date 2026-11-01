@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+- The first screen lists the agents that need you, then what finished and what is at work, with each agent's own message. A blocked agent no longer looks like an idle one. A new tab keeps only what needs you.
+- Answer an agent with `ctrl+r`, without leaving your pane: a number for a menu, or text for a prompt. An answer is only sent if the agent still shows what you saw, and a password prompt takes nothing.
+- Save a session's layout under a name, and build it again later. Claude Code conversations resume, and nothing else runs again.
+
 ## 0.2.0
 
 - Search the skills of the agent you opened the picker from: Claude Code, Codex or pi. The preview shows the description and the frontmatter of a skill, and Enter puts its name in the prompt, with nothing sent.
