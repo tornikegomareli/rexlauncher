@@ -23,8 +23,9 @@ rex.action{
   name = "rexlauncher",
   title = "Rex Launcher",
   run = function(ctx)
-    local open = open_layers[ctx.session_id]
-    open_layers[ctx.session_id] = nil
+    local session = ctx.session_id or ""
+    local open = open_layers[session]
+    open_layers[session] = nil
     if open and is_open(ctx.session_id, open) then
       rex.session.close_layer{ session_id = ctx.session_id, layer_id = open }
       return
@@ -37,7 +38,7 @@ rex.action{
         options = { command = { plugin.dir .. "/bin/rexlauncher", "pick", ctx.client_id or "" } },
       },
     }
-    open_layers[ctx.session_id] = created.layer_id
+    open_layers[session] = created.layer_id
     return created
   end,
 }

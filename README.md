@@ -33,6 +33,10 @@ Type part of a name, or a word you remember from a conversation. The picker look
 rexd install tornikegomareli/rexlauncher
 ```
 
+If rexd is new to you, run `rexd setup` first.
+
+To remove it, run `rexd remove tornikegomareli.rexlauncher`.
+
 It needs:
 
 - [rexd](https://github.com/tornikegomareli/rexd) and Go, to build the plugin.
@@ -87,6 +91,7 @@ Tool calls, tool output and thinking are not searched.
 Limits:
 
 - It searches only conversations that are running in a pane now.
+- The search reads what the panes held when the picker opened. The preview of a screen stays live. To search newer output, open it again.
 - Enter goes to the pane. It cannot scroll Claude Code to the message, so the preview shows the message.
 - Rex keeps no scrollback for a program on the alternate screen. For other full-screen agents, such as Codex, only the visible screen is searched.
 

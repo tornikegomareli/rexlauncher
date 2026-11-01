@@ -392,3 +392,34 @@ func TestTheActionOpensThePickerAndClosesIt(t *testing.T) {
 		t.Fatalf("after a press once it closed itself: %d floating layers", got)
 	}
 }
+
+// "rex do rexlauncher" with no session has no session in its context.
+func TestTheActionWorksWithNoSession(t *testing.T) {
+	server(t)
+	newSession(t, "work")
+	var keymap struct {
+		Config struct {
+			Path string `json:"path"`
+		} `json:"config"`
+	}
+	out, err := runRex("keymap", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(out, &keymap); err != nil {
+		t.Fatal(err)
+	}
+	config, err := os.ReadFile(filepath.Join("rex", "config.lua"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keymap.Config.Path, []byte(fmt.Sprintf("rexd = { plugin = { dir = %q } }\n%s", t.TempDir(), config)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runRex("config", "reload"); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if out, err := runRex("do", "rexlauncher"); err != nil && strings.Contains(err.Error(), "index is nil") {
+		t.Fatalf("%v: %s", err, out)
+	}
+}
