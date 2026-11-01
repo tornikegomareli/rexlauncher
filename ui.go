@@ -303,7 +303,7 @@ func (m *model) captureSelected() tea.Cmd {
 	return func() tea.Msg {
 		text, err := capture(p)
 		if err != nil {
-			text = err.Error()
+			text = screenText(err.Error()) // It holds what rex printed.
 		}
 		return captureMsg{p.Block, text}
 	}

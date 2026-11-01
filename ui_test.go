@@ -649,3 +649,13 @@ func TestAVeryLongColorIsNotPrintedAsText(t *testing.T) {
 		t.Fatalf("got %q", ansi.Strip(got))
 	}
 }
+
+func TestAnErrorInThePreviewCannotMoveTheCursor(t *testing.T) {
+	m := open(t, 120, 30, pane{Block: "a", Name: "x"})
+	m.capture = func(pane) (string, error) { return "", fmt.Errorf("failed\x1b[2J") }
+	m.capturing = false
+	send(m, tickMsg{})
+	if strings.Contains(m.View(), "\x1b[2J") {
+		t.Fatalf("got %q", m.View())
+	}
+}
