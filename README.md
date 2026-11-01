@@ -8,24 +8,7 @@
 
 Rex Launcher is a [rexd](https://github.com/tornikegomareli/rexd) plugin for [Rex](https://www.superlogical.com/rex). It searches every pane on your server, and the words said in the Claude Code conversations inside them, then goes to the pane you choose.
 
-Type part of a name, or a word you remember from a conversation. The picker looks like this in text:
-
-```
- › zebrafish                                                              1 pane
-────────────────────────────────────────────────────────────────────────────────
-  All   Panes   Conversations   Screens
- Conversations                                │ The zebrafish migration failed
-▌ Fix the checkout  The zebrafish migrati…  2 │ because the lock was held.
-                                              │
-                                              │ you: Please explain why the
-                                              │ zebrafish migration failed
-                                              │ ───────────────────────────────
-                                              │ Session  shop
-                                              │ Folder   ~/Development/shop
-                                              │ Matches  2
-────────────────────────────────────────────────────────────────────────────────
- ↵ Go to pane   tab Filter   esc Close                                      1/1
-```
+Type part of a name, or a word you remember from a conversation.
 
 ## Install
 
