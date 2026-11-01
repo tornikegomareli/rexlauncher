@@ -3,7 +3,7 @@
 <h3 align="center">Find any Rex pane by what was said in it, run any Rex action, and put any skill in your agent's prompt.</h3>
 
 <p align="center">
-  <img src=".github/assets/hero.png" width="100%" alt="Rex Launcher open over a dark Rex window. It lists recent conversations with their last message, then the other panes, and the preview on the right shows the live screen of the selected pane" />
+  <img src=".github/assets/hero.gif" width="100%" alt="Rex Launcher open over a dark Rex window. It finds a pane by a word from its conversation and by a word on its screen, splits a pane, then finds a skill and puts /code-review in the Claude Code prompt" />
 </p>
 
 Rex Launcher is one search box for everything in [Rex](https://www.superlogical.com/rex). Press a key, type a few letters, and press Enter.
@@ -86,6 +86,10 @@ With a query, the All tab shows up to 4 actions, below the panes with that name 
 It leaves out actions that close or restart something, such as Close Pane, because Enter runs the first row, and a word you type to find a conversation can match their titles. It also leaves out actions that need an argument. Rex's palette has both.
 
 ## Skills
+
+<p align="center">
+  <img src=".github/assets/skills.png" width="100%" alt="Rex Launcher on its Skills tab with the search rev. It lists /code-review and /security-review, and the preview shows the description, agent, source, file and frontmatter of /code-review" />
+</p>
 
 Open the picker from a pane that runs an agent, and the Skills tab lists what that agent can run. The preview shows what the selected skill does, where it comes from, and the rest of its frontmatter.
 
