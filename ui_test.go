@@ -731,3 +731,12 @@ func TestAJoinedEmojiCannotChangeTheWidthOfALine(t *testing.T) {
 		}
 	}
 }
+
+func TestARowOfAShellNamesItsWindow(t *testing.T) {
+	p := pane{Block: "a", Name: "shell", SessionLabel: "svc", WindowLabel: "api"}
+	m := open(t, 120, 30, p)
+	out := view(m)
+	if !strings.Contains(out, "svc · api · shell") || !strings.Contains(out, "Window   api") {
+		t.Fatalf("got\n%s", out)
+	}
+}

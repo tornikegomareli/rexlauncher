@@ -261,10 +261,14 @@ func (p pane) title() string {
 			break
 		}
 	}
-	// A conversation has a name of its own. A shell is often just "shell", so the
-	// session is what tells it from the others.
-	if p.Conversation == nil && p.SessionLabel != "" && p.SessionLabel != name {
-		return p.SessionLabel + " · " + name
+	if p.Conversation != nil {
+		return name // A conversation has a name of its own.
+	}
+	// A shell is often just "shell", so where it is tells it from the others.
+	for _, place := range []string{p.WindowLabel, p.SessionLabel} {
+		if place != "" && place != name {
+			name = place + " · " + name
+		}
 	}
 	return name
 }

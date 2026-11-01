@@ -13,7 +13,7 @@ const (
 	// Below this width, the preview has no room, and the list takes all of it.
 	previewMinimumWidth = 72
 	refreshInterval     = 600 * time.Millisecond
-	metadataRows        = 3
+	metadataRows        = 4
 
 	// SGR parameters. They come from the terminal's palette, so the picker follows
 	// a light or a dark theme.
@@ -543,6 +543,9 @@ func (m *model) previewLines(width, height int) []string {
 		}
 		lines = append(lines, "\x1b[2m"+strings.Repeat("─", width)+"\x1b[0m")
 		lines = append(lines, m.detail("Session", clean(r.Pane.SessionLabel), width))
+		if r.Pane.WindowLabel != "" {
+			lines = append(lines, m.detail("Window", clean(r.Pane.WindowLabel), width))
+		}
 		if r.Pane.Cwd != "" {
 			lines = append(lines, m.detail("Folder", clean(shortHome(r.Pane.Cwd)), width))
 		}
