@@ -30,6 +30,10 @@ type Pane struct {
 	// Text is what the search reads: the conversation, or the scrollback of any
 	// other pane. The newest comes first.
 	Text []textutil.Entry
+	// Status is what the program in the pane says it is doing.
+	Status Status
+	// From says if this is the pane the picker opened from.
+	From bool
 }
 
 // Active is the last change of the pane's conversation. It is zero without one.
@@ -117,6 +121,24 @@ func ListPanes(self string) ([]Pane, error) {
 	return panes, nil
 }
 
+// ReadStatuses asks every pane what its program is doing, by block. A pane that closed
+// is left out.
+func ReadStatuses(panes []Pane) map[string]Status {
+	found := make([]Status, len(panes))
+	read := make([]bool, len(panes))
+	parallel.ForEach(len(panes), func(i int) {
+		status, err := ReadStatus(panes[i].Session, panes[i].Block)
+		found[i], read[i] = status, err == nil
+	})
+	statuses := map[string]Status{}
+	for i := range panes {
+		if read[i] {
+			statuses[panes[i].Block] = found[i]
+		}
+	}
+	return statuses
+}
+
 var defaultWindowLabel = regexp.MustCompile(`^Window [0-9a-f]{8}$`)
 
 // windowName is the name a person gave a window. Rex makes one up for the others, and
@@ -178,6 +200,9 @@ func sessionPanes(session, self string) ([]Pane, error) {
 // describePane adds the terminal's title and folder. A pane can close at any
 // moment, so a failure only leaves these out.
 func describePane(p *Pane) {
+	if status, err := ReadStatus(p.Session, p.Block); err == nil {
+		p.Status = status
+	}
 	var title struct {
 		Title string `json:"title"`
 	}
@@ -276,5 +301,125 @@ func Insert(session, block, text string) error {
 		return err
 	}
 	_, err := Run("send", "-s", session, "-b", block, text)
+	return err
+}
+
+// What a program reports it is doing, from the Program Status Protocol.
+const (
+	StateIdle    = "idle"
+	StateWorking = "working"
+	StateDone    = "done"
+	StateBlocked = "blocked" // Waiting for the person.
+	StateError   = "error"
+)
+
+// Status is what the program in a pane says it is doing. A pane whose program reports
+// nothing has none, and its State is empty.
+type Status struct {
+	State string
+	// Kind is what a blocked program waits for: permission, question or auth.
+	Kind     string
+	App      string
+	Message  string
+	Progress *int
+	At       time.Time
+}
+
+// statusRank orders states by how much they need the person.
+var statusRank = map[string]int{StateIdle: 0, StateDone: 1, StateWorking: 2, StateError: 3, StateBlocked: 4}
+
+// ReadStatus returns the most urgent of what a pane reports, and of equals the newest.
+// The protocol says to treat a state or kind it does not name as idle or as none.
+func ReadStatus(session, block string) (Status, error) {
+	var reply struct {
+		Records []struct {
+			State     string    `json:"state"`
+			Kind      string    `json:"kind"`
+			App       string    `json:"effective_app"`
+			RawApp    string    `json:"app"`
+			Msg       string    `json:"msg"`
+			Progress  *int      `json:"progress"`
+			UpdatedAt time.Time `json:"updated_at"`
+		} `json:"records"`
+	}
+	if err := blockMethod(Pane{Session: session, Block: block}, "program_status", &reply); err != nil {
+		return Status{}, err
+	}
+	var best Status
+	for _, r := range reply.Records {
+		s := Status{State: r.State, Kind: r.Kind, App: r.App, Message: r.Msg, Progress: r.Progress, At: r.UpdatedAt}
+		if s.App == "" {
+			s.App = r.RawApp
+		}
+		if _, known := statusRank[s.State]; !known {
+			s.State = StateIdle
+		}
+		if s.Kind != "permission" && s.Kind != "question" && s.Kind != "auth" {
+			s.Kind = ""
+		}
+		if best.State == "" || statusRank[s.State] > statusRank[best.State] ||
+			statusRank[s.State] == statusRank[best.State] && s.At.After(best.At) {
+			best = s
+		}
+	}
+	return best, nil
+}
+
+// Needs says if the program waits for the person, or failed.
+func (s Status) Needs() bool {
+	return s.State == StateBlocked || s.State == StateError
+}
+
+// Answer is what a person tells an agent from the picker: one key for a menu, or text for
+// its prompt. Seen is the status the person was looking at.
+type Answer struct {
+	Key  string
+	Text string
+	Seen Status
+}
+
+// Deliver gives an agent an answer, if it still waits for that answer. The person chose
+// from what the screen showed, and the agent may have moved on since: a key for one
+// permission prompt must not land on the next one. Text never goes to a blocked agent,
+// because the Enter after it would pick a menu's default option, and a password prompt
+// gets nothing, because a password does not belong in a search box.
+func Deliver(session, block string, a Answer) error {
+	now, err := ReadStatus(session, block)
+	if err != nil {
+		return err
+	}
+	if now.State != a.Seen.State || now.Kind != a.Seen.Kind || now.Message != a.Seen.Message || !now.At.Equal(a.Seen.At) {
+		return errors.New("the agent moved on, so nothing was sent")
+	}
+	if now.Kind == "auth" {
+		return errors.New("it wants a password, so go to its pane to type it")
+	}
+	if a.Key != "" {
+		return PressKey(session, block, a.Key)
+	}
+	if now.State == StateBlocked {
+		return errors.New("it waits on a menu, so nothing was sent")
+	}
+	return SendAnswer(session, block, a.Text)
+}
+
+// SendAnswer puts text in a pane's prompt and sends it. A paste keeps a newline in the
+// text from acting as Enter.
+func SendAnswer(session, block, text string) error {
+	var ignored map[string]any
+	err := Call("block.event", map[string]any{
+		"session_id": session,
+		"block_id":   block,
+		"event":      map[string]any{"type": "paste", "payload": map[string]string{"text": text}},
+	}, &ignored)
+	if err != nil {
+		return err
+	}
+	return PressKey(session, block, "enter")
+}
+
+// PressKey sends one key to a pane.
+func PressKey(session, block, key string) error {
+	_, err := Run("send-key", "-s", session, "-b", block, key)
 	return err
 }

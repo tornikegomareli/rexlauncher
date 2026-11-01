@@ -342,3 +342,147 @@ func TestInsertTypesIntoThePaneBehindThePickerWithoutEnter(t *testing.T) {
 		t.Errorf("second call %q", got[1])
 	}
 }
+
+func statusOf(t *testing.T, records ...testutil.Block) Status {
+	t.Helper()
+	testutil.FakeRex(t, map[string]any{"block.method.b1.program_status": testutil.Block{"records": records}})
+	got, err := ReadStatus("s1", "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return got
+}
+
+func TestReadStatusKeepsWhatAnAgentNeeds(t *testing.T) {
+	got := statusOf(t, testutil.Block{"state": "blocked", "kind": "permission", "app": "claude-code", "msg": "Allow Bash?", "progress": 40, "updated_at": "2026-11-01T10:00:00Z"})
+	if got.State != StateBlocked || got.Kind != "permission" || got.Message != "Allow Bash?" || got.App != "claude-code" || got.Progress == nil || *got.Progress != 40 {
+		t.Fatalf("%+v", got)
+	}
+	if got.At.IsZero() {
+		t.Fatal("no time")
+	}
+}
+
+func TestReadStatusPicksTheMostUrgentRecord(t *testing.T) {
+	got := statusOf(t,
+		testutil.Block{"state": "working", "updated_at": "2026-11-01T12:00:00Z"},
+		testutil.Block{"state": "blocked", "kind": "question", "updated_at": "2026-11-01T10:00:00Z"},
+		testutil.Block{"state": "done", "updated_at": "2026-11-01T13:00:00Z"},
+	)
+	if got.State != StateBlocked {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestReadStatusPicksTheNewestOfEquallyUrgentRecords(t *testing.T) {
+	got := statusOf(t,
+		testutil.Block{"state": "done", "msg": "old", "updated_at": "2026-11-01T10:00:00Z"},
+		testutil.Block{"state": "done", "msg": "new", "updated_at": "2026-11-01T12:00:00Z"},
+	)
+	if got.Message != "new" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestAnUnknownStateCountsAsIdleAndAnUnknownKindAsNone(t *testing.T) {
+	got := statusOf(t, testutil.Block{"state": "dancing", "kind": "riddle"})
+	if got.State != StateIdle || got.Kind != "" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestAPaneWithNoRecordsHasNoStatus(t *testing.T) {
+	if got := statusOf(t); got.State != "" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestSendAnswerPastesThenPressesEnter(t *testing.T) {
+	calls := testutil.FakeRex(t, map[string]any{})
+	if err := SendAnswer("s1", "b1", "use postgres"); err != nil {
+		t.Fatal(err)
+	}
+	got := calls()
+	if len(got) != 2 || !strings.Contains(got[0], `"type":"paste"`) || !strings.Contains(got[0], `use postgres`) {
+		t.Fatalf("calls %q", got)
+	}
+	if !strings.HasSuffix(got[1], "send-key -s s1 -b b1 enter") {
+		t.Fatalf("second call %q", got[1])
+	}
+}
+
+func TestPressKeySendsOneKeyAndNoEnter(t *testing.T) {
+	calls := testutil.FakeRex(t, map[string]any{})
+	if err := PressKey("s1", "b1", "2"); err != nil {
+		t.Fatal(err)
+	}
+	got := calls()
+	if len(got) != 1 || !strings.HasSuffix(got[0], "send-key -s s1 -b b1 2") {
+		t.Fatalf("calls %q", got)
+	}
+}
+
+func answerSeen(t *testing.T, now testutil.Block, answer Answer) (error, []string) {
+	t.Helper()
+	calls := testutil.FakeRex(t, map[string]any{"block.method.b1.program_status": testutil.Block{"records": []testutil.Block{now}}})
+	err := Deliver("s1", "b1", answer)
+	return err, calls()
+}
+
+func sent(calls []string, what string) bool {
+	for _, c := range calls {
+		if strings.Contains(c, what) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestDeliverPressesTheKeyIfTheAgentStillWaitsForThatAnswer(t *testing.T) {
+	at, _ := time.Parse(time.RFC3339, "2026-11-01T10:00:00Z")
+	err, calls := answerSeen(t, testutil.Block{"state": "blocked", "kind": "permission", "msg": "Allow?", "updated_at": "2026-11-01T10:00:00Z"},
+		Answer{Key: "1", Seen: Status{State: StateBlocked, Kind: "permission", Message: "Allow?", At: at}})
+	if err != nil || !sent(calls, "send-key -s s1 -b b1 1") {
+		t.Fatalf("%v %q", err, calls)
+	}
+}
+
+func TestDeliverRefusesIfTheAgentMovedOn(t *testing.T) {
+	at, _ := time.Parse(time.RFC3339, "2026-11-01T10:00:00Z")
+	seen := Status{State: StateBlocked, Kind: "permission", Message: "Allow Read?", At: at}
+	for name, now := range map[string]testutil.Block{
+		"another question":     {"state": "blocked", "kind": "permission", "msg": "Allow rm?", "updated_at": "2026-11-01T10:00:00Z"},
+		"the same words later": {"state": "blocked", "kind": "permission", "msg": "Allow Read?", "updated_at": "2026-11-01T10:00:09Z"},
+		"not blocked now":      {"state": "working", "updated_at": "2026-11-01T10:00:00Z"},
+	} {
+		err, calls := answerSeen(t, now, Answer{Key: "1", Seen: seen})
+		if err == nil || sent(calls, "send-key") {
+			t.Errorf("%s: %v %q", name, err, calls)
+		}
+	}
+}
+
+// Text followed by Enter would pick the default option of a menu.
+func TestDeliverNeverSendsTextToABlockedAgent(t *testing.T) {
+	err, calls := answerSeen(t, testutil.Block{"state": "blocked", "kind": "question", "msg": "Which?"},
+		Answer{Text: "hello", Seen: Status{State: StateBlocked, Kind: "question", Message: "Which?"}})
+	if err == nil || sent(calls, "paste") || sent(calls, "send-key") {
+		t.Fatalf("%v %q", err, calls)
+	}
+}
+
+func TestDeliverRefusesAPasswordPrompt(t *testing.T) {
+	err, calls := answerSeen(t, testutil.Block{"state": "blocked", "kind": "auth"},
+		Answer{Key: "1", Seen: Status{State: StateBlocked, Kind: "auth"}})
+	if err == nil || sent(calls, "send-key") {
+		t.Fatalf("%v %q", err, calls)
+	}
+}
+
+func TestDeliverSendsTextToAnAgentAtRest(t *testing.T) {
+	err, calls := answerSeen(t, testutil.Block{"state": "done", "msg": "ok"},
+		Answer{Text: "next step", Seen: Status{State: StateDone, Message: "ok"}})
+	if err != nil || !sent(calls, "next step") || !sent(calls, "send-key -s s1 -b b1 enter") {
+		t.Fatalf("%v %q", err, calls)
+	}
+}
