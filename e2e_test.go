@@ -298,3 +298,97 @@ func TestCaptureScreenKeepsColors(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 }
+
+// The action is Lua, so only a real server can run it. Pressing the key while the
+// picker is open must close it, and not stack another.
+func TestTheActionOpensThePickerAndClosesIt(t *testing.T) {
+	server(t)
+	p := newSession(t, "work")
+	dir := t.TempDir()
+	if out, err := exec.Command("go", "build", "-o", filepath.Join(dir, "bin", "rexlauncher"), ".").CombinedOutput(); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	var keymap struct {
+		Config struct {
+			Path string `json:"path"`
+		} `json:"config"`
+	}
+	out, err := runRex("keymap", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(out, &keymap); err != nil {
+		t.Fatal(err)
+	}
+	config, err := os.ReadFile(filepath.Join("rex", "config.lua"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	loader := fmt.Sprintf("rexd = { plugin = { dir = %q } }\n%s", dir, config)
+	if err := os.WriteFile(keymap.Config.Path, []byte(loader), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runRex("config", "reload"); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+
+	floating := func() int {
+		t.Helper()
+		var view struct {
+			Windows []struct {
+				Layers []struct {
+					Kind string `json:"kind"`
+				} `json:"layers"`
+			} `json:"windows"`
+		}
+		if err := callRex("session.view", map[string]string{"session_id": p.Session}, &view); err != nil {
+			t.Fatal(err)
+		}
+		count := 0
+		for _, window := range view.Windows {
+			for _, layer := range window.Layers {
+				if layer.Kind == "floating" {
+					count++
+				}
+			}
+		}
+		return count
+	}
+	press := func() {
+		t.Helper()
+		if out, err := runRex("do", "rexlauncher", "-s", "work"); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+	press()
+	if got := floating(); got != 1 {
+		t.Fatalf("after the first press: %d floating layers", got)
+	}
+	press()
+	if got := floating(); got != 0 {
+		t.Fatalf("after the second press: %d floating layers", got)
+	}
+	press()
+	if got := floating(); got != 1 {
+		t.Fatalf("after the third press: %d floating layers", got)
+	}
+	// The picker can close by itself. The next press must open it, and not only try
+	// to close what is gone. On a server with its own socket the program reports that
+	// it cannot reach it, and waits for Enter.
+	panes, err := listPanes("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, err := runRex("send-key", "-s", "work", "-b", panes[len(panes)-1].Block, "enter"); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	time.Sleep(time.Second)
+	if got := floating(); got != 0 {
+		t.Fatalf("after it closed: %d floating layers", got)
+	}
+	press()
+	if got := floating(); got != 1 {
+		t.Fatalf("after a press once it closed itself: %d floating layers", got)
+	}
+}

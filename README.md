@@ -66,7 +66,9 @@ rex.bind("cmd+shift+k", has_launcher and "rexlauncher" or "session.switch")
 
 The picker has one row for each pane: its name, and the best match in it. With a window of 72 columns or more, the right side has a preview: all the matches of the selected pane, or its live screen with colors if it has no match. The details of the pane are below the preview.
 
-With no query, the picker lists the conversations that changed last, and then the other panes. A pane in the window of the picker is not suggested, because it is behind the picker.
+With no query, the picker lists the conversations that changed last, and then the other panes. A pane in the window of the picker stays under Panes and out of the recent ones, because it is behind the picker.
+
+Press the key again to close the picker.
 
 ## What it searches
 
@@ -90,7 +92,7 @@ Limits:
 
 ## Your data
 
-Nothing leaves your machine. A transcript is mostly tool output, so the plugin keeps an index with only the text above, in your cache folder (`~/Library/Caches/rexlauncher` on macOS). Only you can read these files. Each one is deleted 30 days after its conversation was last searched. The text of your other panes stays in memory while the picker is open.
+Nothing leaves your machine. A transcript is mostly tool output, so the plugin keeps an index with only the text above, in your cache folder (`~/Library/Caches/rexlauncher` on macOS). Only you can read these files. Each one is deleted 30 days after its conversation was last searched, when the picker opens. `rexd remove` does not delete them, so to remove the plugin and its index, also delete that folder. The text of your other panes stays in memory while the picker is open.
 
 ## Develop
 
