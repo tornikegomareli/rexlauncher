@@ -242,3 +242,39 @@ func GoTo(session, window, block, client string) error {
 	_, err = Run(selectArgs...)
 	return err
 }
+
+// Program is what runs in the front of a pane.
+type Program struct {
+	Argv0 string
+	Path  string // The path it was started by.
+	Cwd   string
+}
+
+// Foreground names what runs in the front of a pane. A pane with nothing running has
+// no name.
+func Foreground(session, block string) (Program, error) {
+	var process struct {
+		Foreground struct {
+			Argv0       string `json:"argv0"`
+			InvokedPath string `json:"invoked_path"`
+			Cwd         string `json:"cwd"`
+		} `json:"foreground"`
+	}
+	if err := blockMethod(Pane{Session: session, Block: block}, "process", &process); err != nil {
+		return Program{}, err
+	}
+	f := process.Foreground
+	return Program{Argv0: f.Argv0, Path: f.InvokedPath, Cwd: f.Cwd}, nil
+}
+
+// Insert types text in a pane and leaves it for the person to finish, so it never sends
+// Enter. The floating layer holds the focus until the picker exits, so the pane gets it
+// back first.
+func Insert(session, block, text string) error {
+	var ignored map[string]any
+	if err := Call("session.focus_block", map[string]string{"session_id": session, "block_id": block}, &ignored); err != nil {
+		return err
+	}
+	_, err := Run("send", "-s", session, "-b", block, text)
+	return err
+}

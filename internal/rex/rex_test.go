@@ -301,3 +301,44 @@ func TestPathFromFileURL(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestForegroundNamesTheProgramInAPane(t *testing.T) {
+	testutil.FakeRex(t, map[string]any{
+		"block.method.b1.process": testutil.Block{"foreground": testutil.Block{
+			"name": "2.1.316", "path": "/v/2.1.316", "invoked_path": "/bin/claude", "argv0": "claude", "cwd": "/code",
+		}},
+	})
+	got, err := Foreground("s1", "b1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Argv0 != "claude" || got.Path != "/bin/claude" || got.Cwd != "/code" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestForegroundWithoutAProcessIsEmpty(t *testing.T) {
+	testutil.FakeRex(t, map[string]any{"block.method.b1.process": testutil.Block{"last_exit": 0}})
+	got, err := Foreground("s1", "b1")
+	if err != nil || got != (Program{}) {
+		t.Fatalf("%+v, %v", got, err)
+	}
+}
+
+func TestInsertTypesIntoThePaneBehindThePickerWithoutEnter(t *testing.T) {
+	calls := testutil.FakeRex(t, map[string]any{})
+	if err := Insert("s1", "b1", "/review "); err != nil {
+		t.Fatal(err)
+	}
+	got := calls()
+	if len(got) != 2 {
+		t.Fatalf("calls %q", got)
+	}
+	if !strings.Contains(got[0], "session.focus_block") {
+		t.Errorf("first call %q", got[0])
+	}
+	// The log of calls loses the last space. The end-to-end test sees it.
+	if got[1] != "--autostart=false send -s s1 -b b1 /review" {
+		t.Errorf("second call %q", got[1])
+	}
+}
