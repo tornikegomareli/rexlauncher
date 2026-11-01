@@ -239,9 +239,13 @@ func findConversations(claudeDir string) map[string]conversation {
 			PID       int    `json:"pid"`
 			SessionID string `json:"sessionId"`
 			Name      string `json:"name"`
+			Kind      string `json:"kind"`
 		}
 		if json.Unmarshal(data, &session) != nil || session.PID == 0 || session.SessionID == "" {
 			return
+		}
+		if session.Kind != "" && session.Kind != "interactive" {
+			return // A one-shot run. It is not a conversation to come back to.
 		}
 		env, err := exec.Command("ps", "eww", "-p", fmt.Sprint(session.PID)).Output()
 		if err != nil {

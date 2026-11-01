@@ -248,6 +248,17 @@ func TestFindConversationsLeavesOutAProcessThatIsGone(t *testing.T) {
 	}
 }
 
+// A one-shot run in a pane must not hide the conversation a person is having there.
+func TestAnInteractiveSessionWinsItsPane(t *testing.T) {
+	claude := t.TempDir()
+	const pane = "block:0000aaaa-0000-0000-0000-000000000002"
+	liveSession(t, claude, pane, "talk", "interactive", "The conversation", userLine("hello"))
+	liveSession(t, claude, pane, "oneshot", "print", "A one-shot run", userLine("hello"))
+	if c := findConversations(claude)[pane]; c.ID != "talk" {
+		t.Fatalf("got %+v", c)
+	}
+}
+
 func TestLoadTextReadsAConversationFromItsPane(t *testing.T) {
 	claude, cache := t.TempDir(), t.TempDir()
 	const block = "block:0000aaaa-0000-0000-0000-000000000003"
