@@ -186,7 +186,8 @@ func TestTabChangesTheFilter(t *testing.T) {
 		"Conversations": {"talk"},
 		"Screens":       {"shell"},
 	}
-	for _, filter := range filters {
+	for _, f := range filters {
+		filter := f.name
 		var got []string
 		for _, r := range m.visible() {
 			got = append(got, r.Pane.Block)
@@ -200,8 +201,8 @@ func TestTabChangesTheFilter(t *testing.T) {
 		t.Fatalf("filter %d after a full turn", m.filter)
 	}
 	press(m, tea.KeyShiftTab)
-	if filters[m.filter] != "Screens" {
-		t.Fatalf("filter %s", filters[m.filter])
+	if filters[m.filter].name != "Screens" {
+		t.Fatalf("filter %s", filters[m.filter].name)
 	}
 }
 
@@ -453,8 +454,8 @@ func TestClickingAFilterChoosesIt(t *testing.T) {
 	m := open(t, 120, 30, demoPanes(t)...)
 	line := strings.Split(view(m), "\n")[2]
 	click(m, strings.Index(line, "Screens"), 2)
-	if filters[m.filter] != "Screens" {
-		t.Fatalf("filter %s", filters[m.filter])
+	if filters[m.filter].name != "Screens" {
+		t.Fatalf("filter %s", filters[m.filter].name)
 	}
 }
 
@@ -505,5 +506,18 @@ func TestTypedWordsAreNotKeys(t *testing.T) {
 	send(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("enter")})
 	if m.chosen != nil || string(m.query) != "tabenter" {
 		t.Errorf("chosen %v, query %q", m.chosen, string(m.query))
+	}
+}
+
+// A tab's name is only a label: what it keeps must not depend on it.
+func TestRenamingATabKeepsWhatItShows(t *testing.T) {
+	name := filters[1].name
+	filters[1].name = "Terminals"
+	defer func() { filters[1].name = name }()
+	m := open(t, 120, 30, demoPanes(t)...)
+	typeText(m, "panes")
+	press(m, tea.KeyTab)
+	if rows := m.visible(); len(rows) != 1 || rows[0].Pane.Block != "named" {
+		t.Fatalf("got %+v", rows)
 	}
 }

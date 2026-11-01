@@ -34,9 +34,10 @@ func showing(block, name string, text string) pane {
 }
 
 func kinds(results []result) []string {
+	names := map[reason]string{reasonRecent: "recent", reasonName: "pane", reasonSaid: "said", reasonScreen: "screen"}
 	var out []string
 	for _, r := range results {
-		out = append(out, r.Kind+":"+r.Pane.Block)
+		out = append(out, names[r.Reason]+":"+r.Pane.Block)
 	}
 	return out
 }
@@ -244,7 +245,7 @@ func TestANameMatchesWithLettersLeftOut(t *testing.T) {
 		{"splt", "Split pane"},
 	} {
 		results := search([]pane{{Block: "a", Name: c.name}}, c.query)
-		if len(results) != 1 || results[0].Kind != kindPane || results[0].Heading() != "Panes" {
+		if len(results) != 1 || results[0].Reason != reasonName || results[0].Heading() != "Panes" {
 			t.Errorf("%s in %s: got %+v", c.query, c.name, results)
 		}
 	}
@@ -279,7 +280,7 @@ func TestWordsInThePaneBeatLettersOfItsName(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 	both := talking(t, "both", "tilebar", said("user", "the tlbr file"))
-	if got := search([]pane{both}, "tlbr")[0]; got.Kind != kindSaid || got.Letters != nil {
+	if got := search([]pane{both}, "tlbr")[0]; got.Reason != reasonSaid || got.Letters != nil {
 		t.Fatalf("got %+v", got)
 	}
 }

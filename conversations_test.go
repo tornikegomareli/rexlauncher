@@ -277,7 +277,7 @@ func TestLoadTextReadsAConversationFromItsPane(t *testing.T) {
 		t.Fatalf("got %+v", panes[0])
 	}
 	panes = loadText(panes, cache)
-	if got := search(panes, "zebrafish"); len(got) != 1 || got[0].Kind != kindSaid {
+	if got := search(panes, "zebrafish"); len(got) != 1 || got[0].Reason != reasonSaid {
 		t.Fatalf("got %+v", got)
 	}
 }

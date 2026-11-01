@@ -25,9 +25,6 @@ const (
 	styleSelected = "100"
 )
 
-// filters are the tabs of the picker.
-var filters = []string{"All", "Panes", "Conversations", "Screens"}
-
 // model is the state of the picker.
 type model struct {
 	loadPanes func() ([]pane, error)
@@ -139,10 +136,10 @@ func (m *model) mouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if msg.Y == tabsLineRow {
 			x := 1
 			for i, filter := range filters {
-				if msg.X >= x && msg.X < x+len(filter)+2 {
+				if msg.X >= x && msg.X < x+len(filter.name)+2 {
 					return m, m.setFilter(i)
 				}
-				x += len(filter) + 3
+				x += len(filter.name) + 3
 			}
 			return m, nil
 		}
@@ -264,22 +261,10 @@ func (m *model) refresh(keepSelection bool) {
 
 // visible returns the rows of the current filter.
 func (m *model) visible() []result {
-	if m.filter == 0 {
-		return m.rows
-	}
-	empty := len(strings.Fields(string(m.query))) == 0
+	empty := len(m.words()) == 0
 	var rows []result
 	for _, r := range m.rows {
-		var keep bool
-		switch filters[m.filter] {
-		case "Panes":
-			keep = r.Named
-		case "Conversations":
-			keep = r.Pane.Conversation != nil && (empty || r.Matches() > 0)
-		case "Screens":
-			keep = r.Pane.Conversation == nil && (empty || r.Matches() > 0)
-		}
-		if keep {
+		if filters[m.filter].keep(r, empty) {
 			rows = append(rows, r)
 		}
 	}
@@ -441,9 +426,9 @@ func (m *model) tabsLine(width int) string {
 	spans := []span{{" ", ""}}
 	for i, filter := range filters {
 		if i == m.filter {
-			spans = append(spans, span{" " + filter + " ", styleSelected + ";" + styleBold})
+			spans = append(spans, span{" " + filter.name + " ", styleSelected + ";" + styleBold})
 		} else {
-			spans = append(spans, span{" " + filter + " ", styleDim})
+			spans = append(spans, span{" " + filter.name + " ", styleDim})
 		}
 		spans = append(spans, span{" ", ""})
 	}

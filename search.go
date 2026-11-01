@@ -13,10 +13,6 @@ import (
 )
 
 const (
-	kindPane   = "pane"
-	kindSaid   = "said"
-	kindScreen = "screen"
-
 	maxInPreview = 20
 	maxRecent    = 6
 
@@ -58,17 +54,28 @@ type match struct {
 	Strong bool // Each word occurs at the start of a word.
 }
 
+// reason is why a pane is a row. The order here is the order of the sections.
+type reason int
+
+const (
+	reasonRecent reason = iota // An empty query: its conversation changed last.
+	reasonName                 // Its name holds the words, or an empty query.
+	reasonSaid                 // Its conversation holds the words.
+	reasonScreen               // Its screen holds the words.
+)
+
 // result is one row of the picker. There is one for each pane, because Enter
 // goes to a pane, and cannot go to a message in it.
 type result struct {
-	Pane  pane
-	Kind  string // What found the pane.
-	Named bool   // The name of the pane holds the words.
+	Pane   pane
+	Reason reason
+	// Partial says the words only occur inside other words.
+	Partial bool
+	Named   bool // The name of the pane holds the words.
 	// Letters are the positions in the title that a query matches with letters
 	// left out, as "tlbr" in "tilebar".
 	Letters []int
 	Found   []match // The best first.
-	rank    int
 	at      string
 }
 
@@ -79,17 +86,51 @@ func (r result) Matches() int {
 
 // Heading is the name of the section that the row is in.
 func (r result) Heading() string {
-	switch r.rank {
-	case -1:
-		return "Recent conversations"
-	case 0:
-		return "Panes"
-	case 1:
-		return "Conversations"
-	case 2:
-		return "Screens"
+	if r.Partial {
+		return "Partial matches"
 	}
-	return "Partial matches"
+	switch r.Reason {
+	case reasonRecent:
+		return "Recent conversations"
+	case reasonName:
+		return "Panes"
+	case reasonSaid:
+		return "Conversations"
+	}
+	return "Screens"
+}
+
+// before says if a row comes before another. Partial matches come after all the
+// others, and within a section, a whole name comes before letters left out, and the
+// newest comes first.
+func (r result) before(other result) bool {
+	if r.Partial != other.Partial {
+		return other.Partial
+	}
+	if r.Reason != other.Reason {
+		return r.Reason < other.Reason
+	}
+	if (r.Letters == nil) != (other.Letters == nil) {
+		return r.Letters == nil
+	}
+	return r.at > other.at
+}
+
+// filter is one tab of the picker.
+type filter struct {
+	name string
+	keep func(r result, emptyQuery bool) bool
+}
+
+var filters = []filter{
+	{"All", func(result, bool) bool { return true }},
+	{"Panes", func(r result, _ bool) bool { return r.Named }},
+	{"Conversations", func(r result, empty bool) bool {
+		return r.Pane.Conversation != nil && (empty || r.Matches() > 0)
+	}},
+	{"Screens", func(r result, empty bool) bool {
+		return r.Pane.Conversation == nil && (empty || r.Matches() > 0)
+	}},
 }
 
 // search finds panes by name first, then by the words said in their
@@ -111,53 +152,40 @@ func search(panes []pane, query string) []result {
 		if !named && len(found) == 0 && letters == nil {
 			continue
 		}
-		r := result{Pane: p, Kind: kindPane, Named: named, Found: found}
+		r := result{Pane: p, Reason: reasonName, Named: named, Found: found}
 		strong := named && startsWords(name, words)
 		if !strong && len(found) > 0 && (found[0].Strong || !named) {
 			strong = found[0].Strong
-			r.Kind, r.rank = kindScreen, 2
+			r.Reason = reasonScreen
 			if p.Conversation != nil {
-				r.Kind, r.rank, r.at = kindSaid, 1, found[0].At
+				r.Reason, r.at = reasonSaid, found[0].At
 			}
 		}
-		if !strong {
-			r.rank += 3
-		}
+		r.Partial = !strong
 		if letters != nil && !named && (len(found) == 0 || !found[0].Strong) {
-			r.Kind, r.Named, r.Letters, r.rank, r.at = kindPane, true, letters, 0, ""
+			r.Reason, r.Partial, r.Named, r.Letters, r.at = reasonName, false, true, letters, ""
 		}
 		results = append(results, r)
 	}
-	sort.SliceStable(results, func(i, j int) bool {
-		if results[i].rank != results[j].rank {
-			return results[i].rank < results[j].rank
-		}
-		if (results[i].Letters == nil) != (results[j].Letters == nil) {
-			return results[i].Letters == nil
-		}
-		return results[i].at > results[j].at
-	})
+	sort.SliceStable(results, func(i, j int) bool { return results[i].before(results[j]) })
 	return results
 }
 
 func listAll(panes []pane) []result {
 	results := make([]result, len(panes))
 	for i, p := range panes {
-		results[i] = result{Pane: p, Kind: kindPane, Named: true}
+		results[i] = result{Pane: p, Reason: reasonName, Named: true}
 		if !p.active().IsZero() && !p.Here {
-			results[i].rank, results[i].at = -1, p.active().UTC().Format(time.RFC3339Nano)
+			results[i].Reason, results[i].at = reasonRecent, p.active().UTC().Format(time.RFC3339Nano)
 		}
 	}
-	sort.SliceStable(results, func(i, j int) bool {
-		if results[i].rank != results[j].rank {
-			return results[i].rank < results[j].rank
-		}
-		return results[i].at > results[j].at
-	})
+	sort.SliceStable(results, func(i, j int) bool { return results[i].before(results[j]) })
 	for i := maxRecent; i < len(results); i++ {
-		results[i].rank = max(results[i].rank, 0)
+		if results[i].Reason == reasonRecent {
+			results[i].Reason = reasonName // Too old for the section, so it joins the panes.
+		}
 	}
-	sort.SliceStable(results, func(i, j int) bool { return results[i].rank < results[j].rank })
+	sort.SliceStable(results, func(i, j int) bool { return results[i].Reason < results[j].Reason })
 	return results
 }
 
